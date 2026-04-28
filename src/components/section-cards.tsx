@@ -141,7 +141,7 @@ function MetricCard({ item }: { item: MetricCardItem }) {
         </div>
 
         {(item.footerTitle || item.footerText) && (
-          <div className="mt-5 pt-4">
+          <div className="mt-2 pt-4">
             {item.footerTitle && (
               <div className="flex items-center gap-2 text-sm font-medium text-white">
                 <span className="line-clamp-1">{item.footerTitle}</span>

@@ -377,7 +377,7 @@ function EnergyRecommendations() {
           return (
             <div
               key={item.title}
-              className="rounded-3xl border border-white/10 bg-white/[0.03] p-4"
+              className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
             >
               <div className="flex gap-3">
                 <div
@@ -407,7 +407,7 @@ function EnergyRecommendations() {
           );
         })}
 
-        <div className="rounded-3xl border border-green-500/20 bg-green-500/10 p-4">
+        <div className="rounded-xl border border-green-500/20 bg-green-500/10 p-4">
           <div className="flex items-center gap-2 text-green-400">
             <TrendingDown className="size-4" />
             <span className="text-sm font-semibold">Projected savings</span>

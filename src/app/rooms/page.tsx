@@ -190,9 +190,6 @@ function RoomCard({
         selected ? "border-blue-500/70 bg-blue-500/[0.08]" : "border-white/10",
       )}
     >
-      {selected && (
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.22),transparent_18rem)]" />
-      )}
 
       <div className="relative">
         <div className="mb-6 flex items-start justify-between gap-4">

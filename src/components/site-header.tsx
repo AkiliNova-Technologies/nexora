@@ -36,6 +36,18 @@ const pageMeta: Record<string, { title: string; description: string }> = {
     title: "Energy",
     description: "Optimize power consumption across your smart home",
   },
+  "/settings": {
+    title: "Settings",
+    description: "Configure system preferences and automation behavior",
+  },
+  "/account": {
+    title: "Account",
+    description: "View profile, subscription, and system health status",
+  },
+  "/alerts": {
+    title: "Alerts",
+    description: "Review and manage recent security and system alerts",
+  },
 };
 
 export function SiteHeader() {

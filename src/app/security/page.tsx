@@ -199,9 +199,6 @@ export default function SecurityPage() {
                 <h1 className="mt-1 text-3xl font-semibold tracking-tight text-white">
                   Security
                 </h1>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Monitor cameras, locks, motion sensors, alerts, and security automation.
-                </p>
               </div>
 
               <Button className="w-fit rounded-2xl bg-blue-500 px-5 text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400">
@@ -451,7 +448,7 @@ function SecurityEventsFeed() {
         })}
       </div>
 
-      <div className="mt-5 rounded-3xl border border-blue-500/20 bg-blue-500/10 p-4">
+      <div className="mt-5 rounded-xl border border-blue-500/20 bg-blue-500/10 p-4">
         <div className="flex items-center gap-2 text-blue-400">
           <ShieldAlert className="size-4" />
           <span className="text-sm font-semibold">Automation linked</span>

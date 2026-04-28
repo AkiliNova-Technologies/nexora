@@ -193,12 +193,9 @@ export default function AnalyticsPage() {
                 Smart home performance intelligence
               </p>
               <h1 className="mt-1 text-3xl font-semibold tracking-tight text-white">
-                Analytics
+                Analytics and Insights
               </h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Track comfort, automation behavior, energy usage, and device
-                health.
-              </p>
+              
             </section>
 
             <SectionCards items={analyticsMetrics} />
