@@ -166,6 +166,8 @@ export function DataTable<TData>({
   addLabel = "Add Device",
   className,
 }: DataTableProps<TData>) {
+  "use no memo";
+
   const tableData = (data ?? defaultData) as TData[];
   const tableColumns = (columns ?? defaultColumns) as ColumnDef<TData>[];
 
@@ -174,6 +176,9 @@ export function DataTable<TData>({
     React.useState<VisibilityState>({});
   const [globalFilter, setGlobalFilter] = React.useState("");
 
+  // TanStack Table intentionally returns non-memoizable functions. This component
+  // is locally opted out above; the warning is not actionable for this API.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data: tableData,
     columns: tableColumns,

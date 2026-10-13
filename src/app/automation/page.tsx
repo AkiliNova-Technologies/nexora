@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import {
-  BellRing,
   Bot,
   Clock3,
   Flame,
@@ -12,7 +11,6 @@ import {
   Power,
   ShieldCheck,
   Snowflake,
-  Sparkles,
   Zap,
 } from "lucide-react";
 
@@ -372,4 +370,3 @@ function RuleStep({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-

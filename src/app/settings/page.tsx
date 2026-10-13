@@ -4,7 +4,6 @@ import * as React from "react";
 import {
   Bell,
   Bot,
-  Clock3,
   Gauge,
   Globe2,
   Moon,

@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   BellRing,
   Camera,
-  Clock3,
   DoorOpen,
   Eye,
   Lock,
@@ -15,7 +14,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   Siren,
-  Unlock,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -28,60 +26,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import type { Device, DeviceState } from "@/domain/smart-estate";
+import { useDeviceStore, useDevices } from "@/components/providers/device-state-provider";
+import { getCapability } from "@/lib/device-capabilities";
+import { mockRooms } from "@/data/mock-smart-estate";
 
 type SecurityMode = "armed" | "home" | "disarmed";
 type SecurityStatus = "safe" | "warning" | "alert";
-type DeviceType = "camera" | "lock" | "motion" | "door";
 type DeviceStatus = "online" | "offline" | "warning";
-
-type SecurityDevice = {
-  id: string;
-  name: string;
-  room: string;
-  type: DeviceType;
-  status: DeviceStatus;
-  enabled: boolean;
-  lastActive: string;
-};
-
-const securityDevices: SecurityDevice[] = [
-  {
-    id: "SEC-001",
-    name: "Front Door Lock",
-    room: "Entrance",
-    type: "lock",
-    status: "online",
-    enabled: true,
-    lastActive: "2 min ago",
-  },
-  {
-    id: "SEC-002",
-    name: "Garage Camera",
-    room: "Garage",
-    type: "camera",
-    status: "offline",
-    enabled: false,
-    lastActive: "1 hr ago",
-  },
-  {
-    id: "SEC-003",
-    name: "Living Room Motion",
-    room: "Living Room",
-    type: "motion",
-    status: "warning",
-    enabled: true,
-    lastActive: "8 min ago",
-  },
-  {
-    id: "SEC-004",
-    name: "Back Door Sensor",
-    room: "Kitchen",
-    type: "door",
-    status: "online",
-    enabled: true,
-    lastActive: "Now",
-  },
-];
 
 const securityEvents = [
   {
@@ -158,10 +110,10 @@ const securityMetrics: MetricCardItem[] = [
 ];
 
 const securityDeviceIconMap = {
-  camera: Camera,
-  lock: LockKeyhole,
-  motion: Radar,
-  door: DoorOpen,
+  CAMERA: Camera,
+  LOCK: LockKeyhole,
+  MOTION_SENSOR: Radar,
+  CONTACT_SENSOR: DoorOpen,
 };
 
 const statusStyles = {
@@ -338,6 +290,10 @@ function QuickActions() {
 }
 
 function SecurityDeviceGrid() {
+  const { devices, states } = useDevices();
+  const securityDevices = devices.filter((device) =>
+    ["CAMERA", "LOCK", "MOTION_SENSOR", "CONTACT_SENSOR"].includes(device.type),
+  );
   return (
     <section className="rounded-[2rem] border border-white/10 bg-card/80 p-5 shadow-xl shadow-black/20 backdrop-blur">
       <div className="mb-5 flex items-center justify-between gap-3">
@@ -355,42 +311,52 @@ function SecurityDeviceGrid() {
 
       <div className="grid gap-4 md:grid-cols-2">
         {securityDevices.map((device) => (
-          <SecurityDeviceCard key={device.id} device={device} />
+          <SecurityDeviceCard key={device.id} device={device} state={states[device.id]} />
         ))}
       </div>
     </section>
   );
 }
 
-function SecurityDeviceCard({ device }: { device: SecurityDevice }) {
-  const Icon = securityDeviceIconMap[device.type];
-  const [enabled, setEnabled] = React.useState(device.enabled);
+function SecurityDeviceCard({ device, state }: { device: Device; state: DeviceState }) {
+  const store = useDeviceStore();
+  const Icon = securityDeviceIconMap[device.type as keyof typeof securityDeviceIconMap];
+  const enabled = device.type === "LOCK" ? state.reported.locked ?? false : state.reported.on ?? true;
+  const status: DeviceStatus = state.connectivity === "OFFLINE" ? "offline" : device.type === "MOTION_SENSOR" ? "warning" : "online";
+  const canPower = getCapability(device, "POWER") !== undefined;
+  const canLock = getCapability(device, "LOCK") !== undefined;
 
   return (
     <article className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex gap-3">
-          <div className={cn("flex size-11 shrink-0 items-center justify-center rounded-2xl border", statusStyles[device.status])}>
+          <div className={cn("flex size-11 shrink-0 items-center justify-center rounded-2xl border", statusStyles[status])}>
             <Icon className="size-5" />
           </div>
 
           <div>
             <h3 className="font-semibold text-white">{device.name}</h3>
-            <p className="text-sm text-muted-foreground">{device.room}</p>
+            <p className="text-sm text-muted-foreground">{mockRooms.find((room) => room.id === device.roomId)?.name}</p>
           </div>
         </div>
 
-        <Switch checked={enabled} onCheckedChange={setEnabled} />
+        {(canPower || canLock) && (
+          <Switch
+            checked={enabled}
+            disabled={state.connectivity === "OFFLINE" || ["PENDING", "ACCEPTED"].includes(state.commandStatus)}
+            onCheckedChange={(checked) => void store.sendCommand(device.id, canLock ? (checked ? "LOCK" : "UNLOCK") : (checked ? "TURN_ON" : "TURN_OFF")).catch(() => undefined)}
+          />
+        )}
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-white/10 pt-4">
-        <Badge variant="outline" className={cn("rounded-full capitalize", statusStyles[device.status])}>
+        <Badge variant="outline" className={cn("rounded-full capitalize", statusStyles[status])}>
           <span className="mr-1.5 size-1.5 rounded-full bg-current" />
-          {device.status}
+          {status}
         </Badge>
 
         <span className="text-xs text-muted-foreground">
-          {device.lastActive}
+          {new Date(state.lastReportedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </span>
       </div>
     </article>

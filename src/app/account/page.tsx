@@ -5,7 +5,6 @@ import {
   BadgeCheck,
   Bell,
   Bot,
-  CalendarDays,
   Home,
   Mail,
   MapPin,

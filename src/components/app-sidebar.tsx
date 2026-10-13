@@ -10,10 +10,7 @@ import {
   Home,
   Lightbulb,
   Lock,
-  Settings2,
-  ShieldCheck,
   Thermometer,
-  Zap,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";

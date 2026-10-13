@@ -26,90 +26,12 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import type { Device, DeviceState, DeviceType } from "@/domain/smart-estate";
+import { featuredDeviceIds, mockRooms } from "@/data/mock-smart-estate";
+import { getCapability } from "@/lib/device-capabilities";
+import { useDeviceStore, useDevices } from "@/components/providers/device-state-provider";
 
 type DeviceStatus = "online" | "offline" | "warning";
-type DeviceType = "light" | "climate" | "security" | "power" | "sensor";
-
-type Device = {
-  id: string;
-  name: string;
-  room: string;
-  type: DeviceType;
-  status: DeviceStatus;
-  isOn: boolean;
-  value: number;
-  unit: string;
-  meta: string;
-};
-
-const devices: Device[] = [
-  {
-    id: "DEV-001",
-    name: "Living Room Lights",
-    room: "Living Room",
-    type: "light",
-    status: "online",
-    isOn: true,
-    value: 78,
-    unit: "%",
-    meta: "Brightness control",
-  },
-  {
-    id: "DEV-002",
-    name: "Bedroom Thermostat",
-    room: "Bedroom",
-    type: "climate",
-    status: "online",
-    isOn: true,
-    value: 24,
-    unit: "°C",
-    meta: "Cooling mode",
-  },
-  {
-    id: "DEV-003",
-    name: "Kitchen Smart Plug",
-    room: "Kitchen",
-    type: "power",
-    status: "warning",
-    isOn: true,
-    value: 740,
-    unit: "W",
-    meta: "High usage detected",
-  },
-  {
-    id: "DEV-004",
-    name: "Garage Camera",
-    room: "Garage",
-    type: "security",
-    status: "offline",
-    isOn: false,
-    value: 0,
-    unit: "%",
-    meta: "Connection lost",
-  },
-  {
-    id: "DEV-005",
-    name: "Front Door Sensor",
-    room: "Entrance",
-    type: "sensor",
-    status: "online",
-    isOn: true,
-    value: 86,
-    unit: "%",
-    meta: "Battery level",
-  },
-  {
-    id: "DEV-006",
-    name: "Office Fan",
-    room: "Office",
-    type: "climate",
-    status: "online",
-    isOn: false,
-    value: 35,
-    unit: "%",
-    meta: "Speed control",
-  },
-];
 
 const deviceMetrics: MetricCardItem[] = [
   {
@@ -155,19 +77,30 @@ const deviceMetrics: MetricCardItem[] = [
 ];
 
 const deviceIconMap = {
-  light: Lightbulb,
-  climate: Thermometer,
-  security: Camera,
-  power: PlugZap,
-  sensor: ShieldCheck,
-};
+  LIGHT: Lightbulb,
+  FAN: Fan,
+  THERMOSTAT: Thermometer,
+  SMART_PLUG: PlugZap,
+  CAMERA: Camera,
+  CONTACT_SENSOR: ShieldCheck,
+  MOTION_SENSOR: ShieldCheck,
+  LOCK: ShieldCheck,
+  BLIND: SlidersHorizontal,
+  SPEAKER: Cpu,
+  TEMPERATURE_SENSOR: Thermometer,
+  HUMIDITY_SENSOR: Thermometer,
+} satisfies Record<DeviceType, React.ElementType>;
 
 export default function DevicesPage() {
   const [query, setQuery] = React.useState("");
   const [view, setView] = React.useState<"grid" | "compact">("grid");
+  const { devices, states } = useDevices();
+  const featuredDevices = devices.filter((device) =>
+    featuredDeviceIds.includes(device.id as (typeof featuredDeviceIds)[number]),
+  );
 
-  const filteredDevices = devices.filter((device) =>
-    `${device.name} ${device.room} ${device.type}`
+  const filteredDevices = featuredDevices.filter((device) =>
+    `${device.name} ${roomName(device.roomId)} ${device.type}`
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
@@ -256,6 +189,7 @@ export default function DevicesPage() {
                 <DeviceCard
                   key={device.id}
                   device={device}
+                  state={states[device.id]}
                   compact={view === "compact"}
                 />
               ))}
@@ -267,72 +201,30 @@ export default function DevicesPage() {
   );
 }
 
-function getDeviceControl(type: DeviceType) {
-  switch (type) {
-    case "light":
-      return {
-        kind: "slider" as const,
-        label: "Brightness",
-        min: 0,
-        max: 100,
-        unit: "%",
-      };
-
-    case "climate":
-      return {
-        kind: "slider" as const,
-        label: "Temperature",
-        min: 16,
-        max: 30,
-        unit: "°C",
-      };
-
-    case "power":
-      return {
-        kind: "status" as const,
-        label: "Power Load",
-        value: "Monitoring usage",
-      };
-
-    case "security":
-      return {
-        kind: "actions" as const,
-        label: "Camera Controls",
-        actions: ["View Feed", "Record"],
-      };
-
-    case "sensor":
-      return {
-        kind: "status" as const,
-        label: "Sensor Reading",
-        value: "Auto-reporting",
-      };
-
-    default:
-      return {
-        kind: "status" as const,
-        label: "Device Status",
-        value: "Monitoring",
-      };
-  }
+function getDeviceControl(device: Device, state: DeviceState) {
+  const brightness = getCapability(device, "BRIGHTNESS");
+  if (brightness) return { kind: "slider" as const, label: "Brightness", command: "SET_BRIGHTNESS" as const, value: state.reported.brightness ?? 0, unit: "%", ...brightness };
+  const fanSpeed = getCapability(device, "FAN_SPEED");
+  if (fanSpeed) return { kind: "slider" as const, label: "Fan Speed", command: "SET_FAN_SPEED" as const, value: state.reported.fanSpeed ?? 0, unit: "%", ...fanSpeed };
+  const temperature = getCapability(device, "TARGET_TEMPERATURE");
+  if (temperature) return { kind: "slider" as const, label: "Temperature", command: "SET_TARGET_TEMPERATURE" as const, value: state.reported.targetTemperature ?? 22, ...temperature, unit: "°C" };
+  if (device.type === "CAMERA") return { kind: "camera" as const };
+  return { kind: "status" as const, label: device.type === "SMART_PLUG" ? "Power Load" : "Sensor Reading", value: device.type === "SMART_PLUG" ? "Monitoring usage" : "Auto-reporting" };
 }
 
 function DeviceControl({
-  type,
-  enabled,
+  device,
+  state,
   status,
-  value,
-  setValue,
   control,
 }: {
-  type: DeviceType;
-  enabled: boolean;
+  device: Device;
+  state: DeviceState;
   status: DeviceStatus;
-  value: number[];
-  setValue: React.Dispatch<React.SetStateAction<number[]>>;
   control: ReturnType<typeof getDeviceControl>;
 }) {
-  const disabled = !enabled || status === "offline";
+  const store = useDeviceStore();
+  const disabled = state.reported.on === false || status === "offline" || ["PENDING", "ACCEPTED"].includes(state.commandStatus);
 
   if (control.kind === "slider") {
     return (
@@ -342,14 +234,15 @@ function DeviceControl({
             {control.label}
           </span>
           <span className="text-xs font-semibold text-blue-400">
-            {value[0]}
+            {control.value}
             {control.unit}
           </span>
         </div>
 
         <Slider
-          value={value}
-          onValueChange={setValue}
+          key={`${device.id}-${control.value}`}
+          defaultValue={[control.value]}
+          onValueCommit={([value]) => void store.sendCommand(device.id, control.command, value).catch(() => undefined)}
           min={control.min}
           max={control.max}
           step={1}
@@ -359,14 +252,15 @@ function DeviceControl({
     );
   }
 
-  if (control.kind === "actions") {
+  if (control.kind === "camera") {
     return (
       <div className="grid grid-cols-2 gap-2">
-        {control.actions.map((action) => (
+        {["View Feed", "Record"].map((action) => (
           <Button
             key={action}
             variant="outline"
             disabled={disabled}
+            onClick={action === "Record" ? () => void store.sendCommand(device.id, "START_RECORDING").catch(() => undefined) : undefined}
             className="rounded-2xl border-white/10 bg-white/[0.04] text-white hover:bg-white/10"
           >
             {action}
@@ -390,35 +284,48 @@ function DeviceControl({
   );
 }
 
-function getDeviceReading(device: Device, value: number) {
+function getDeviceReading(device: Device, state: DeviceState) {
   switch (device.type) {
-    case "light":
-      return `${value}%`;
-    case "climate":
-      return `${value}°C`;
-    case "power":
-      return `${device.value}W`;
-    case "security":
-      return device.status === "offline" ? "No feed" : "Live";
-    case "sensor":
-      return `${device.value}% battery`;
+    case "LIGHT": return `${state.reported.brightness ?? (state.reported.on ? 100 : 0)}%`;
+    case "THERMOSTAT": return `${state.reported.targetTemperature ?? 22}°C`;
+    case "FAN": return `${state.reported.fanSpeed ?? 0}%`;
+    case "SMART_PLUG": return `${state.reported.powerWatts ?? 0}W`;
+    case "CAMERA": return state.connectivity === "OFFLINE" ? "No feed" : "Live";
+    case "CONTACT_SENSOR": return `${state.reported.batteryPercent ?? 0}% battery`;
     default:
-      return `${device.value}${device.unit}`;
+      return state.connectivity === "ONLINE" ? "Reporting" : "Unavailable";
   }
+}
+
+function roomName(roomId?: string) {
+  return mockRooms.find((room) => room.id === roomId)?.name ?? "Unassigned";
+}
+
+function deviceMeta(device: Device) {
+  if (getCapability(device, "BRIGHTNESS")) return "Brightness control";
+  if (getCapability(device, "FAN_SPEED")) return "Speed control";
+  if (getCapability(device, "TARGET_TEMPERATURE")) return "Cooling mode";
+  if (device.type === "SMART_PLUG") return "High usage detected";
+  if (device.type === "CAMERA") return "Camera monitoring";
+  return "Battery level";
 }
 
 function DeviceCard({
   device,
+  state,
   compact,
 }: {
   device: Device;
+  state: DeviceState;
   compact?: boolean;
 }) {
+  const store = useDeviceStore();
   const Icon = deviceIconMap[device.type];
-  const [enabled, setEnabled] = React.useState(device.isOn);
-  const [value, setValue] = React.useState([device.value]);
-
-  const control = getDeviceControl(device.type);
+  const enabled = state.reported.on ?? true;
+  const status: DeviceStatus = state.connectivity === "OFFLINE" ? "offline" : state.reported.powerWatts && state.reported.powerWatts > 700 ? "warning" : "online";
+  const control = getDeviceControl(device, state);
+  const canPower = getCapability(device, "POWER") !== undefined;
+  const busy = state.commandStatus === "PENDING" || state.commandStatus === "ACCEPTED";
 
   return (
     <div
@@ -444,35 +351,39 @@ function DeviceCard({
           <div className="min-w-0">
             <h2 className="truncate font-semibold text-white">{device.name}</h2>
             <p className="truncate text-sm text-muted-foreground">
-              {device.room} · {device.meta}
+              {roomName(device.roomId)} · {deviceMeta(device)}
             </p>
           </div>
         </div>
 
-        <Switch checked={enabled} onCheckedChange={setEnabled} />
+        {canPower && (
+          <Switch
+            checked={enabled}
+            disabled={state.connectivity === "OFFLINE" || busy}
+            onCheckedChange={(checked) => void store.sendCommand(device.id, checked ? "TURN_ON" : "TURN_OFF").catch(() => undefined)}
+          />
+        )}
       </div>
 
       <div className={cn("mt-6 space-y-4", compact && "mt-0 md:w-[360px]")}>
         <div className="flex items-center justify-between gap-3">
-          <StatusBadge status={device.status} />
+          <StatusBadge status={status} />
 
           <span className="text-sm font-semibold text-white">
-            {getDeviceReading(device, value[0])}
+            {getDeviceReading(device, state)}
           </span>
         </div>
 
         <DeviceControl
-          type={device.type}
-          enabled={enabled}
-          status={device.status}
-          value={value}
-          setValue={setValue}
+          device={device}
+          state={state}
+          status={status}
           control={control}
         />
 
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <span>{device.id}</span>
-          <span>{enabled ? "Active" : "Inactive"}</span>
+          <span>{busy ? state.commandStatus : enabled ? "Active" : "Inactive"}</span>
         </div>
       </div>
     </div>

@@ -1,13 +1,7 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
-import { cn } from "@/lib/utils";
 import { TooltipProvider } from "@/components/ui/tooltip";
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-sans",
-});
+import { DeviceStateProvider } from "@/components/providers/device-state-provider";
 
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL || "https://nexora.vercel.app";
@@ -65,9 +59,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={cn("h-full antialiased", inter.variable)}>
+    <html lang="en" className="h-full antialiased">
       <body className="min-h-full bg-[#0B0F14] font-sans text-[#F9FAFB]">
-        <TooltipProvider>{children}</TooltipProvider>
+        <TooltipProvider>
+          <DeviceStateProvider>{children}</DeviceStateProvider>
+        </TooltipProvider>
       </body>
     </html>
   );

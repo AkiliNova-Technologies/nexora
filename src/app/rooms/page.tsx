@@ -22,11 +22,14 @@ import {
   VenetianMask,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
+import { useDeviceStore, useDevices } from "@/components/providers/device-state-provider";
+import { getCapability } from "@/lib/device-capabilities";
+import type { Device, DeviceState } from "@/domain/smart-estate";
 
 const rooms = [
   {
+    id: "room-living",
     name: "Living Room",
     icon: Sofa,
     devicesOn: 8,
@@ -36,6 +39,7 @@ const rooms = [
     tone: "blue",
   },
   {
+    id: "room-bedroom",
     name: "Master Bedroom",
     icon: BedDouble,
     devicesOn: 3,
@@ -45,6 +49,7 @@ const rooms = [
     tone: "neutral",
   },
   {
+    id: "room-kitchen",
     name: "Kitchen",
     icon: ChefHat,
     devicesOn: 5,
@@ -54,6 +59,7 @@ const rooms = [
     tone: "amber",
   },
   {
+    id: "room-office",
     name: "Home Office",
     icon: MonitorDot,
     devicesOn: 5,
@@ -63,6 +69,7 @@ const rooms = [
     tone: "green",
   },
   {
+    id: "room-theater",
     name: "Home Theater",
     icon: Armchair,
     devicesOn: 0,
@@ -72,6 +79,7 @@ const rooms = [
     tone: "neutral",
   },
   {
+    id: "room-outdoor",
     name: "Outdoor",
     icon: Home,
     devicesOn: 2,
@@ -82,41 +90,9 @@ const rooms = [
   },
 ];
 
-const livingRoomDevices = [
-  {
-    name: "Ceiling Spotlights",
-    meta: "Brightness: 80%",
-    icon: Lightbulb,
-    enabled: true,
-  },
-  {
-    name: "Floor Lamp",
-    meta: "Color: Warm White",
-    icon: Lightbulb,
-    enabled: true,
-  },
-  {
-    name: "Air Conditioner",
-    meta: "Setting: Cooling",
-    icon: Snowflake,
-    enabled: true,
-  },
-  {
-    name: "Window Blinds",
-    meta: "Status: Closed",
-    icon: VenetianMask,
-    enabled: false,
-  },
-  {
-    name: "Living Soundbar",
-    meta: "Playing: Lo-fi Chill",
-    icon: Music,
-    enabled: true,
-  },
-];
-
 export default function RoomsPage() {
   const [selectedRoom, setSelectedRoom] = React.useState(rooms[0]);
+  const { devices, states } = useDevices();
 
   return (
     <SidebarProvider
@@ -162,7 +138,11 @@ export default function RoomsPage() {
                 ))}
               </div>
 
-              <RoomControlPanel room={selectedRoom} />
+              <RoomControlPanel
+                room={selectedRoom}
+                devices={devices.filter((device) => device.roomId === selectedRoom.id)}
+                states={states}
+              />
             </section>
           </div>
         </main>
@@ -245,13 +225,13 @@ function RoomCard({
   );
 }
 
-function TemperatureControl() {
-  const MIN = 16;
-  const MAX = 30;
-
-  const [temp, setTemp] = React.useState([22]);
-
-  const percentage = ((temp[0] - MIN) / (MAX - MIN)) * 100;
+function TemperatureControl({ device, state }: { device: Device; state: DeviceState }) {
+  const store = useDeviceStore();
+  const capability = getCapability(device, "TARGET_TEMPERATURE");
+  if (!capability) return null;
+  const { min: MIN, max: MAX } = capability;
+  const temp = state.reported.targetTemperature ?? 22;
+  const percentage = ((temp - MIN) / (MAX - MIN)) * 100;
 
   return (
     <div className="mt-8 border-t border-white/10 pt-8">
@@ -262,7 +242,7 @@ function TemperatureControl() {
 
         <div className="flex items-center gap-2 text-blue-400">
           <Thermometer className="size-5" />
-          <span className="text-2xl font-black">{temp[0]}°C</span>
+          <span className="text-2xl font-black">{temp}°C</span>
         </div>
       </div>
 
@@ -278,11 +258,13 @@ function TemperatureControl() {
 
         {/* Slider */}
         <Slider
-          value={temp}
+          key={`${device.id}-${temp}`}
+          defaultValue={[temp]}
           min={MIN}
           max={MAX}
           step={1}
-          onValueChange={setTemp}
+          onValueCommit={([value]) => void store.sendCommand(device.id, "SET_TARGET_TEMPERATURE", value).catch(() => undefined)}
+          disabled={state.connectivity === "OFFLINE" || ["PENDING", "ACCEPTED"].includes(state.commandStatus)}
           className="relative z-10"
         />
       </div>
@@ -295,8 +277,18 @@ function TemperatureControl() {
   );
 }
 
-function RoomControlPanel({ room }: { room: (typeof rooms)[number] }) {
+function RoomControlPanel({
+  room,
+  devices,
+  states,
+}: {
+  room: (typeof rooms)[number];
+  devices: Device[];
+  states: Record<string, DeviceState>;
+}) {
   const Icon = room.icon;
+  const store = useDeviceStore();
+  const thermostat = devices.find((device) => getCapability(device, "TARGET_TEMPERATURE"));
 
   return (
     <aside className="rounded-[2rem] border border-blue-500/30 bg-card/80 p-6 shadow-2xl shadow-black/30 backdrop-blur xl:sticky xl:top-24">
@@ -314,28 +306,33 @@ function RoomControlPanel({ room }: { room: (typeof rooms)[number] }) {
           </div>
         </div>
 
-        <button className="text-sm font-medium text-blue-400 transition hover:text-blue-300">
+        <button
+          onClick={() => devices.filter((device) => getCapability(device, "POWER") && states[device.id]?.reported.on).forEach((device) => void store.sendCommand(device.id, "TURN_OFF").catch(() => undefined))}
+          className="text-sm font-medium text-blue-400 transition hover:text-blue-300"
+        >
           Turn all off
         </button>
       </div>
 
       <div className="space-y-4">
-        {livingRoomDevices.map((device) => {
-          const DeviceIcon = device.icon;
+        {devices.map((device) => {
+          const state = states[device.id];
+          const enabled = state?.reported.on ?? state?.reported.open ?? false;
+          const DeviceIcon = roomDeviceIcon(device);
 
           return (
             <div
               key={device.name}
               className={cn(
                 "flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4",
-                !device.enabled && "opacity-60",
+                !enabled && "opacity-60",
               )}
             >
               <div className="flex items-center gap-4">
                 <div
                   className={cn(
                     "flex size-10 items-center justify-center rounded-xl",
-                    device.enabled
+                    enabled
                       ? "bg-blue-500/15 text-blue-400"
                       : "bg-white/10 text-muted-foreground",
                   )}
@@ -347,17 +344,38 @@ function RoomControlPanel({ room }: { room: (typeof rooms)[number] }) {
                   <p className="text-sm font-semibold text-white">
                     {device.name}
                   </p>
-                  <p className="text-xs text-muted-foreground">{device.meta}</p>
+                  <p className="text-xs text-muted-foreground">{roomDeviceMeta(device, state)}</p>
                 </div>
               </div>
 
-              <Switch defaultChecked={device.enabled} />
+              {getCapability(device, "POWER") && (
+                <Switch
+                  checked={enabled}
+                  disabled={state.connectivity === "OFFLINE" || ["PENDING", "ACCEPTED"].includes(state.commandStatus)}
+                  onCheckedChange={(checked) => void store.sendCommand(device.id, checked ? "TURN_ON" : "TURN_OFF").catch(() => undefined)}
+                />
+              )}
             </div>
           );
         })}
       </div>
 
-      <TemperatureControl />
+      {thermostat && <TemperatureControl device={thermostat} state={states[thermostat.id]} />}
     </aside>
   );
+}
+
+function roomDeviceIcon(device: Device) {
+  if (device.type === "THERMOSTAT") return Snowflake;
+  if (device.type === "BLIND") return VenetianMask;
+  if (device.type === "SPEAKER") return Music;
+  return Lightbulb;
+}
+
+function roomDeviceMeta(device: Device, state: DeviceState) {
+  if (device.type === "LIGHT" && state.reported.brightness !== undefined) return `Brightness: ${state.reported.brightness}%`;
+  if (device.type === "THERMOSTAT") return `Setting: ${state.reported.targetTemperature ?? 22}°C`;
+  if (device.type === "BLIND") return `Status: ${state.reported.open ? "Open" : "Closed"}`;
+  if (device.type === "SPEAKER") return state.reported.playing ? "Playing: Lo-fi Chill" : "Paused";
+  return state.connectivity === "ONLINE" ? "Connected" : "Offline";
 }

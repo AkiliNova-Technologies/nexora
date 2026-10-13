@@ -33,8 +33,8 @@ import {
 // 🔁 Simulated smart home data
 const chartData = Array.from({ length: 90 }).map((_, i) => ({
   date: new Date(2024, 3, i + 1).toISOString(),
-  temperature: 20 + Math.random() * 8, // °C
-  energy: 10 + Math.random() * 10, // kWh
+  temperature: 24 + Math.sin(i / 6) * 3,
+  energy: 15 + Math.cos(i / 5) * 4,
 }));
 
 const chartConfig = {
@@ -50,11 +50,8 @@ const chartConfig = {
 
 export function ChartAreaInteractive() {
   const isMobile = useIsMobile();
-  const [timeRange, setTimeRange] = React.useState("30d");
-
-  React.useEffect(() => {
-    if (isMobile) setTimeRange("7d");
-  }, [isMobile]);
+  const [selectedTimeRange, setSelectedTimeRange] = React.useState<string | null>(null);
+  const timeRange = selectedTimeRange ?? (isMobile ? "7d" : "30d");
 
   const filteredData = chartData.slice(
     timeRange === "7d" ? -7 : timeRange === "30d" ? -30 : -90
@@ -72,7 +69,7 @@ export function ChartAreaInteractive() {
           <ToggleGroup
             type="single"
             value={timeRange}
-            onValueChange={setTimeRange}
+            onValueChange={(value) => value && setSelectedTimeRange(value)}
             variant="outline"
             className="hidden @[767px]/card:flex"
           >
@@ -81,7 +78,7 @@ export function ChartAreaInteractive() {
             <ToggleGroupItem value="7d">7d</ToggleGroupItem>
           </ToggleGroup>
 
-          <Select value={timeRange} onValueChange={setTimeRange}>
+          <Select value={timeRange} onValueChange={setSelectedTimeRange}>
             <SelectTrigger
               className="w-32 @[767px]/card:hidden"
               size="sm"
