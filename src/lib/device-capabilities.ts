@@ -18,6 +18,9 @@ const commandCapability: Partial<Record<DeviceCommandType, DeviceCapability["typ
   STOP: "POSITION",
   START_RECORDING: "CAMERA_RECORDING",
   STOP_RECORDING: "CAMERA_RECORDING",
+  OPEN_GATE: "GATE_CONTROL",
+  CLOSE_GATE: "GATE_CONTROL",
+  GET_GATE_STATUS: "GATE_CONTROL",
 };
 
 export function getCapability<T extends DeviceCapability["type"]>(
@@ -31,6 +34,7 @@ export function getCapability<T extends DeviceCapability["type"]>(
 }
 
 export function supportsCommand(device: Device, command: DeviceCommandType) {
+  if (device.allowedOperations && !device.allowedOperations.includes("COMMAND")) return false;
   const required = commandCapability[command];
   return required !== undefined && getCapability(device, required) !== undefined;
 }
@@ -80,5 +84,8 @@ export function applyCommand(
     case "START_RECORDING": return { ...reported, recording: true };
     case "STOP_RECORDING": return { ...reported, recording: false };
     case "STOP": return reported;
+    case "OPEN_GATE": return { ...reported, lastRequestedOperation: "OPEN_GATE", physicalPositionVerification: "UNVERIFIED" };
+    case "CLOSE_GATE": return { ...reported, lastRequestedOperation: "CLOSE_GATE", physicalPositionVerification: "UNVERIFIED" };
+    case "GET_GATE_STATUS": return { ...reported, physicalPositionVerification: "UNVERIFIED" };
   }
 }

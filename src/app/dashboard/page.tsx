@@ -1,13 +1,26 @@
+"use client";
+
 import { AppSidebar } from "@/components/app-sidebar";
 import { ChartAreaInteractive } from "@/components/chart-area-interactive";
 import { DataTable } from "@/components/data-table";
-import { SectionCards } from "@/components/section-cards";
+import { SectionCards, type MetricCardItem } from "@/components/section-cards";
 import { SiteHeader } from "@/components/site-header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 
 import data from "./data.json";
+import { Activity, Cpu, PlugZap, ShieldCheck } from "lucide-react";
+import { useDevices, useSmartEstate } from "@/components/providers/device-state-provider";
 
 export default function DashboardPage() {
+  const { dashboard, currentHouse, eventStatus } = useSmartEstate();
+  const { devices, states } = useDevices();
+  const online = dashboard?.onlineDevices ?? Object.values(states).filter((state) => state.connectivity === "ONLINE").length;
+  const metrics: MetricCardItem[] = [
+    { title: "Total Devices", value: dashboard?.totalDevices ?? devices.length, badge: `${online} online`, icon: Cpu, tone: "blue", footerTitle: currentHouse?.name ?? "Current house", footerText: `Live updates: ${eventStatus}` },
+    { title: "Online Devices", value: online, badge: devices.length ? `${Math.round((online / devices.length) * 100)}%` : "0%", icon: Activity, tone: "green", footerTitle: "Current connectivity", footerText: "Reported by the device state service" },
+    { title: "Energy Today", value: `${dashboard?.energyTodayKwh ?? 0} kWh`, icon: PlugZap, tone: "amber", footerTitle: "Backend summary", footerText: "Aggregate for the selected house" },
+    { title: "Security Mode", value: dashboard?.securityMode ?? "—", badge: `${dashboard?.activeAutomations ?? 0} automations`, icon: ShieldCheck, tone: "purple", footerTitle: "House security", footerText: "Current dashboard state" },
+  ];
   return (
     <SidebarProvider
       style={
@@ -34,7 +47,7 @@ export default function DashboardPage() {
                 </h1>
               </section>
 
-              <SectionCards />
+              <SectionCards items={metrics} />
 
               <div className="grid gap-5 xl:grid-cols-[1.5fr_0.9fr]">
                 <ChartAreaInteractive />

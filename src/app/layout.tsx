@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DeviceStateProvider } from "@/components/providers/device-state-provider";
+import { SessionGuard } from "@/components/providers/session-guard";
+import { NexoraAssistant } from "@/components/nexora-ai/nexora-assistant";
 
 const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL || "https://nexora.vercel.app";
@@ -62,7 +64,7 @@ export default function RootLayout({
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full bg-[#0B0F14] font-sans text-[#F9FAFB]">
         <TooltipProvider>
-          <DeviceStateProvider>{children}</DeviceStateProvider>
+          <DeviceStateProvider><SessionGuard>{children}</SessionGuard><NexoraAssistant /></DeviceStateProvider>
         </TooltipProvider>
       </body>
     </html>

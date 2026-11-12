@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   BellRing,
@@ -26,45 +27,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { Device, DeviceState } from "@/domain/smart-estate";
-import { useDeviceStore, useDevices } from "@/components/providers/device-state-provider";
+import type { Device, DeviceState, SecurityMode } from "@/domain/smart-estate";
+import { useDeviceStore, useDevices, useSmartEstate } from "@/components/providers/device-state-provider";
 import { getCapability } from "@/lib/device-capabilities";
-import { mockRooms } from "@/data/mock-smart-estate";
 
-type SecurityMode = "armed" | "home" | "disarmed";
 type SecurityStatus = "safe" | "warning" | "alert";
 type DeviceStatus = "online" | "offline" | "warning";
-
-const securityEvents = [
-  {
-    title: "Back door opened",
-    location: "Kitchen",
-    time: "Now",
-    severity: "warning",
-    icon: DoorOpen,
-  },
-  {
-    title: "Motion detected",
-    location: "Living Room",
-    time: "8 min ago",
-    severity: "warning",
-    icon: Radar,
-  },
-  {
-    title: "Garage camera offline",
-    location: "Garage",
-    time: "1 hr ago",
-    severity: "alert",
-    icon: WifiOff,
-  },
-  {
-    title: "Front door locked",
-    location: "Entrance",
-    time: "2 hrs ago",
-    severity: "safe",
-    icon: Lock,
-  },
-];
 
 const securityMetrics: MetricCardItem[] = [
   {
@@ -123,9 +91,12 @@ const statusStyles = {
 };
 
 export default function SecurityPage() {
-  const [mode, setMode] = React.useState<SecurityMode>("armed");
+  const {securityMode,securityModeLoading,securityModePending,securityModeError,changeSecurityMode}=useSmartEstate();
+  const mode=securityMode?.mode??"DISARMED";
   const systemStatus: SecurityStatus =
-    mode === "disarmed" ? "warning" : "safe";
+    mode === "DISARMED" ? "warning" : "safe";
+  const modeLabel=mode==="ARMED_AWAY"?"Armed Away":mode==="ARMED_HOME"?"Armed Home":"Disarmed";
+  const metrics=securityMetrics.map((item,index)=>index===0?{...item,value:securityModeLoading?"Loading…":modeLabel,badge:`v${securityMode?.version??0}`,footerTitle:mode==="DISARMED"?"Monitoring only":"Protection active",footerText:mode==="DISARMED"?"Sensor activity is recorded without intrusion alerts.":"Backend-authoritative security mode is active."}:item);
 
   return (
     <SidebarProvider
@@ -159,10 +130,10 @@ export default function SecurityPage() {
               </Button>
             </section>
 
-            <SectionCards items={securityMetrics} />
+            <SectionCards items={metrics} />
 
             <section className="grid gap-5 xl:grid-cols-[1fr_0.85fr]">
-              <SecurityStatusPanel mode={mode} setMode={setMode} status={systemStatus} />
+              <SecurityStatusPanel mode={mode} status={systemStatus} loading={securityModeLoading} pending={securityModePending} error={securityModeError} onChange={changeSecurityMode} />
               <QuickActions />
             </section>
 
@@ -179,13 +150,14 @@ export default function SecurityPage() {
 
 function SecurityStatusPanel({
   mode,
-  setMode,
   status,
+  loading,pending,error,onChange,
 }: {
   mode: SecurityMode;
-  setMode: React.Dispatch<React.SetStateAction<SecurityMode>>;
   status: SecurityStatus;
+  loading:boolean;pending:boolean;error:string|null;onChange:(mode:SecurityMode)=>Promise<void>;
 }) {
+  const labels:Record<SecurityMode,string>={DISARMED:"Disarmed",ARMED_HOME:"Armed Home",ARMED_AWAY:"Armed Away"};
   return (
     <section className="overflow-hidden rounded-[2rem] border border-green-500/20 bg-card/80 p-6 shadow-2xl shadow-black/30 backdrop-blur">
       <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
@@ -216,7 +188,7 @@ function SecurityStatusPanel({
             </Badge>
 
             <h2 className="text-2xl font-semibold text-white">
-              Security system is {mode}
+              Security system is {loading?"loading":labels[mode]}
             </h2>
 
             <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
@@ -228,19 +200,27 @@ function SecurityStatusPanel({
       </div>
 
         <div className="grid grid-cols-3 gap-2 rounded-3xl border border-white/10 bg-white/[0.03] p-2 mt-8">
-          {(["armed", "home", "disarmed"] as SecurityMode[]).map((item) => (
+          {(["ARMED_AWAY", "ARMED_HOME", "DISARMED"] as SecurityMode[]).map((item) => (
             <Button
               key={item}
               variant="outline"
-              onClick={() => setMode(item)}
+              onClick={() => void onChange(item).catch(()=>undefined)}
+              disabled={loading||pending}
               className={cn(
-                "rounded-2xl border-white/10 bg-transparent capitalize text-muted-foreground hover:bg-white/10 hover:text-white",
+                "rounded-2xl border-white/10 bg-transparent text-muted-foreground hover:bg-white/10 hover:text-white",
                 mode === item && "border-blue-500/20 bg-blue-500/15 text-blue-400"
               )}
             >
-              {item}
+              {labels[item]}
             </Button>
           ))}
+        </div>
+        {pending&&<p className="mt-3 text-sm text-blue-400">Updating security mode…</p>}
+        {error&&<p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}
+        <div className="mt-8 border-t border-white/10 pt-6">
+          <h3 id="sensor-policy-heading" className="text-lg font-semibold text-white">Intrusion Monitoring</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Choose which motion sensors participate in security monitoring.</p>
+          <SecuritySensorPolicies />
         </div>
     </section>
   );
@@ -291,6 +271,7 @@ function QuickActions() {
 
 function SecurityDeviceGrid() {
   const { devices, states } = useDevices();
+  const {rooms}=useSmartEstate();
   const securityDevices = devices.filter((device) =>
     ["CAMERA", "LOCK", "MOTION_SENSOR", "CONTACT_SENSOR"].includes(device.type),
   );
@@ -311,18 +292,18 @@ function SecurityDeviceGrid() {
 
       <div className="grid gap-4 md:grid-cols-2">
         {securityDevices.map((device) => (
-          <SecurityDeviceCard key={device.id} device={device} state={states[device.id]} />
+          <SecurityDeviceCard key={device.id} device={device} state={states[device.id]} roomName={rooms.find(room=>room.id===device.roomId)?.name} />
         ))}
       </div>
     </section>
   );
 }
 
-function SecurityDeviceCard({ device, state }: { device: Device; state: DeviceState }) {
+function SecurityDeviceCard({ device, state,roomName }: { device: Device; state: DeviceState;roomName?:string }) {
   const store = useDeviceStore();
   const Icon = securityDeviceIconMap[device.type as keyof typeof securityDeviceIconMap];
   const enabled = device.type === "LOCK" ? state.reported.locked ?? false : state.reported.on ?? true;
-  const status: DeviceStatus = state.connectivity === "OFFLINE" ? "offline" : device.type === "MOTION_SENSOR" ? "warning" : "online";
+  const status: DeviceStatus = state.connectivity === "OFFLINE" ? "offline" : device.type === "MOTION_SENSOR"&&state.reported.motion ? "warning" : "online";
   const canPower = getCapability(device, "POWER") !== undefined;
   const canLock = getCapability(device, "LOCK") !== undefined;
 
@@ -336,7 +317,7 @@ function SecurityDeviceCard({ device, state }: { device: Device; state: DeviceSt
 
           <div>
             <h3 className="font-semibold text-white">{device.name}</h3>
-            <p className="text-sm text-muted-foreground">{mockRooms.find((room) => room.id === device.roomId)?.name}</p>
+            <p className="text-sm text-muted-foreground">{roomName??"Unassigned"}</p>
           </div>
         </div>
 
@@ -352,7 +333,7 @@ function SecurityDeviceCard({ device, state }: { device: Device; state: DeviceSt
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-white/10 pt-4">
         <Badge variant="outline" className={cn("rounded-full capitalize", statusStyles[status])}>
           <span className="mr-1.5 size-1.5 rounded-full bg-current" />
-          {status}
+          {device.type==="MOTION_SENSOR"&&status!=="offline"?(state.reported.motion?"motion detected":"clear"):status}
         </Badge>
 
         <span className="text-xs text-muted-foreground">
@@ -363,31 +344,54 @@ function SecurityDeviceCard({ device, state }: { device: Device; state: DeviceSt
   );
 }
 
+function SecuritySensorPolicies(){
+  const {securitySensorPolicies:policies,securitySensorPoliciesLoading:loading,securitySensorPolicyPendingId:pendingId,securitySensorPolicyError:error,changeSecuritySensorPolicy,rooms}=useSmartEstate();
+  const {devices,states}=useDevices();const sensors=devices.filter(device=>device.type==="MOTION_SENSOR");
+  const update=(deviceId:string,key:"enabled"|"monitorArmedHome"|"monitorArmedAway",value:boolean)=>{const policy=policies.find(item=>item.deviceId===deviceId);if(!policy)return;void changeSecuritySensorPolicy(deviceId,{enabled:policy.enabled,monitorArmedHome:policy.monitorArmedHome,monitorArmedAway:policy.monitorArmedAway,[key]:value}).catch(()=>undefined);};
+  return <div className="mt-5" aria-labelledby="sensor-policy-heading">
+    {loading&&<p className="text-sm text-muted-foreground">Loading sensor policies…</p>}{error&&<p role="alert" className="mb-3 text-sm text-red-400">{error}</p>}
+    {!loading&&sensors.length===0&&<p className="text-sm text-muted-foreground">No supported security sensors are registered for this house.</p>}
+    <div className="space-y-3">{sensors.map(device=>{const policy=policies.find(item=>item.deviceId===device.id);const offline=states[device.id]?.connectivity==="OFFLINE";const pending=pendingId===device.id;return <article key={device.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="mb-4 flex items-start justify-between"><div><h3 className="font-semibold text-white">{device.name}</h3><p className="text-sm text-muted-foreground">{rooms.find(room=>room.id===device.roomId)?.name??"Unassigned"}</p></div><Badge variant="outline" className={cn("rounded-full",offline?"border-amber-500/20 text-amber-400":"border-green-500/20 text-green-400")}>{offline?<WifiOff className="mr-1 size-3"/>:<Wifi className="mr-1 size-3"/>}{offline?"Offline":"Online"}</Badge></div>
+      {!policy?<p className="text-sm text-amber-400">No policy is provisioned. This sensor will not participate in intrusion detection.</p>:<div className="grid gap-4 sm:grid-cols-3">{([['enabled','Security monitoring'],['monitorArmedHome','Armed Home'],['monitorArmedAway','Armed Away']] as const).map(([key,label])=><label key={key} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 p-3 text-sm text-white"><span>{label}</span><Switch aria-label={`${device.name}: ${label}`} checked={policy[key]} disabled={pending} onCheckedChange={checked=>update(device.id,key,checked)}/></label>)}</div>}
+      {offline&&<p className="mt-3 text-xs text-amber-400">Offline sensors cannot produce live security activity.</p>}{pending&&<p className="mt-3 text-xs text-muted-foreground">Saving and waiting for backend confirmation…</p>}
+    </article>})}</div>
+  </div>;
+}
+
 function SecurityEventsFeed() {
+  const {securityEvents,securityEventsLoading,securityEventsError,rooms}=useSmartEstate();
+  const {devices}=useDevices();
   return (
     <section className="rounded-[2rem] border border-white/10 bg-card/80 p-5 shadow-xl shadow-black/20 backdrop-blur">
-      <div className="mb-5">
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div>
         <h2 className="text-lg font-semibold text-white">Live Events</h2>
         <p className="text-sm text-muted-foreground">
           Recent security activity across the home.
         </p>
+        </div>
+        <Button asChild variant="outline" className="shrink-0 rounded-xl border-white/10 bg-white/[0.04] text-white hover:bg-white/10"><Link href="/security/events">View all events</Link></Button>
       </div>
 
       <div className="space-y-4">
+        {securityEventsLoading&&<p className="text-sm text-muted-foreground">Loading security activity…</p>}
+        {securityEventsError&&<p role="alert" className="text-sm text-red-400">{securityEventsError}</p>}
+        {!securityEventsLoading&&!securityEventsError&&securityEvents.length===0&&<p className="text-sm text-muted-foreground">No security activity has been recorded.</p>}
         {securityEvents.map((event) => {
-          const Icon = event.icon;
+          const Icon = Radar;const device=devices.find(item=>item.id===event.deviceId);const room=rooms.find(item=>item.id===device?.roomId);const detected=event.type==="MOTION_DETECTED";
 
           return (
             <div
-              key={`${event.title}-${event.time}`}
+              key={event.id}
               className="flex gap-3 rounded-3xl border border-white/10 bg-white/[0.03] p-4"
             >
               <div
                 className={cn(
                   "flex size-10 shrink-0 items-center justify-center rounded-2xl border",
-                  event.severity === "safe" && "border-green-500/20 bg-green-500/10 text-green-400",
-                  event.severity === "warning" && "border-amber-500/20 bg-amber-500/10 text-amber-400",
-                  event.severity === "alert" && "border-red-500/20 bg-red-500/10 text-red-400"
+                  event.severity === "CRITICAL" && "border-red-500/20 bg-red-500/10 text-red-400",
+                  detected&&"border-amber-500/20 bg-amber-500/10 text-amber-400",
+                  !detected&&"border-green-500/20 bg-green-500/10 text-green-400"
                 )}
               >
                 <Icon className="size-4" />
@@ -397,15 +401,15 @@ function SecurityEventsFeed() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-semibold text-white">
-                      {event.title}
+                      {detected?"Motion detected":"Motion cleared"}
                     </h3>
                     <p className="text-sm text-muted-foreground">
-                      {event.location}
+                      {room?.name??device?.name??"Unknown location"}
                     </p>
                   </div>
 
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {event.time}
+                    {new Date(event.occurredAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}
                   </span>
                 </div>
               </div>

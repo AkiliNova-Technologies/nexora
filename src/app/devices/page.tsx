@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Camera,
   Cpu,
+  DoorOpen,
   Fan,
   Lightbulb,
   PlugZap,
@@ -27,17 +28,16 @@ import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { Device, DeviceState, DeviceType } from "@/domain/smart-estate";
-import { featuredDeviceIds, mockRooms } from "@/data/mock-smart-estate";
 import { getCapability } from "@/lib/device-capabilities";
-import { useDeviceStore, useDevices } from "@/components/providers/device-state-provider";
+import { useDeviceStore, useDevices, useSmartEstate } from "@/components/providers/device-state-provider";
 
 type DeviceStatus = "online" | "offline" | "warning";
 
-const deviceMetrics: MetricCardItem[] = [
+function deviceMetrics(total: number, online: number): MetricCardItem[] { return [
   {
     title: "Total Devices",
-    value: "42",
-    badge: "+6 online",
+    value: total,
+    badge: `${online} online`,
     trend: "up",
     icon: Cpu,
     tone: "blue",
@@ -46,8 +46,8 @@ const deviceMetrics: MetricCardItem[] = [
   },
   {
     title: "Online Devices",
-    value: "36",
-    badge: "86%",
+    value: online,
+    badge: total ? `${Math.round((online / total) * 100)}%` : "0%",
     trend: "up",
     icon: Wifi,
     tone: "green",
@@ -56,7 +56,7 @@ const deviceMetrics: MetricCardItem[] = [
   },
   {
     title: "Offline Devices",
-    value: "3",
+    value: total - online,
     badge: "Needs check",
     trend: "neutral",
     icon: WifiOff,
@@ -74,7 +74,7 @@ const deviceMetrics: MetricCardItem[] = [
     footerTitle: "Usage optimized",
     footerText: "Automation is reducing unnecessary consumption.",
   },
-];
+]; }
 
 const deviceIconMap = {
   LIGHT: Lightbulb,
@@ -89,18 +89,18 @@ const deviceIconMap = {
   SPEAKER: Cpu,
   TEMPERATURE_SENSOR: Thermometer,
   HUMIDITY_SENSOR: Thermometer,
+  GATE: DoorOpen,
 } satisfies Record<DeviceType, React.ElementType>;
 
 export default function DevicesPage() {
   const [query, setQuery] = React.useState("");
   const [view, setView] = React.useState<"grid" | "compact">("grid");
   const { devices, states } = useDevices();
-  const featuredDevices = devices.filter((device) =>
-    featuredDeviceIds.includes(device.id as (typeof featuredDeviceIds)[number]),
-  );
+  const { rooms, dashboard, eventStatus, mode } = useSmartEstate();
+  const roomNames = React.useMemo(() => Object.fromEntries(rooms.map((room) => [room.id, room.name])), [rooms]);
 
-  const filteredDevices = featuredDevices.filter((device) =>
-    `${device.name} ${roomName(device.roomId)} ${device.type}`
+  const filteredDevices = devices.filter((device) =>
+    `${device.name} ${device.roomId ? roomNames[device.roomId] : "Unassigned"} ${device.type}`
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
@@ -130,6 +130,7 @@ export default function DevicesPage() {
                   Devices
                 </h1>
               </div>
+              <Badge variant="outline" className="w-fit rounded-full border-white/10 text-muted-foreground">{mode} · {eventStatus}</Badge>
 
               <Button className="w-fit rounded-2xl bg-blue-500 px-5 text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400">
                 <Plus className="size-4" />
@@ -137,7 +138,7 @@ export default function DevicesPage() {
               </Button>
             </section>
 
-            <SectionCards items={deviceMetrics} />
+            <SectionCards items={deviceMetrics(devices.length, dashboard?.onlineDevices ?? Object.values(states).filter((state) => state.connectivity === "ONLINE").length)} />
 
             <section className="rounded-3xl border border-white/10 bg-card/80 p-4 shadow-xl shadow-black/20 backdrop-blur">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -190,6 +191,7 @@ export default function DevicesPage() {
                   key={device.id}
                   device={device}
                   state={states[device.id]}
+                  roomName={device.roomId ? roomNames[device.roomId] : undefined}
                   compact={view === "compact"}
                 />
               ))}
@@ -297,10 +299,6 @@ function getDeviceReading(device: Device, state: DeviceState) {
   }
 }
 
-function roomName(roomId?: string) {
-  return mockRooms.find((room) => room.id === roomId)?.name ?? "Unassigned";
-}
-
 function deviceMeta(device: Device) {
   if (getCapability(device, "BRIGHTNESS")) return "Brightness control";
   if (getCapability(device, "FAN_SPEED")) return "Speed control";
@@ -314,10 +312,12 @@ function DeviceCard({
   device,
   state,
   compact,
+  roomName,
 }: {
   device: Device;
   state: DeviceState;
   compact?: boolean;
+  roomName?: string;
 }) {
   const store = useDeviceStore();
   const Icon = deviceIconMap[device.type];
@@ -351,7 +351,7 @@ function DeviceCard({
           <div className="min-w-0">
             <h2 className="truncate font-semibold text-white">{device.name}</h2>
             <p className="truncate text-sm text-muted-foreground">
-              {roomName(device.roomId)} · {deviceMeta(device)}
+              {roomName ?? "Unassigned"} · {deviceMeta(device)}
             </p>
           </div>
         </div>

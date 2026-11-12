@@ -23,11 +23,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Slider } from "@/components/ui/slider";
-import { useDeviceStore, useDevices } from "@/components/providers/device-state-provider";
+import { useDeviceStore, useDevices, useSmartEstate } from "@/components/providers/device-state-provider";
 import { getCapability } from "@/lib/device-capabilities";
 import type { Device, DeviceState } from "@/domain/smart-estate";
 
-const rooms = [
+const roomTemplates = [
   {
     id: "room-living",
     name: "Living Room",
@@ -91,8 +91,15 @@ const rooms = [
 ];
 
 export default function RoomsPage() {
-  const [selectedRoom, setSelectedRoom] = React.useState(rooms[0]);
+  const [selectedRoomId, setSelectedRoomId] = React.useState<string>();
   const { devices, states } = useDevices();
+  const { rooms } = useSmartEstate();
+  const roomModels: RoomModel[] = rooms.map((room, index) => {
+    const template = roomTemplates.find((item) => item.name === room.name) ?? roomTemplates[index % roomTemplates.length];
+    const roomDevices = devices.filter((device) => device.roomId === room.id);
+    return { ...template, id: room.id, name: room.name, devicesOn: roomDevices.filter((device) => states[device.id]?.reported.on).length };
+  });
+  const selectedRoom = roomModels.find((room) => room.id === selectedRoomId) ?? roomModels[0];
 
   return (
     <SidebarProvider
@@ -128,21 +135,21 @@ export default function RoomsPage() {
 
             <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.6fr_0.9fr]">
               <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                {rooms.map((room) => (
+                {roomModels.map((room) => (
                   <RoomCard
                     key={room.name}
                     room={room}
-                    selected={selectedRoom.name === room.name}
-                    onClick={() => setSelectedRoom(room)}
+                    selected={selectedRoom?.id === room.id}
+                    onClick={() => setSelectedRoomId(room.id)}
                   />
                 ))}
               </div>
 
-              <RoomControlPanel
+              {selectedRoom && <RoomControlPanel
                 room={selectedRoom}
                 devices={devices.filter((device) => device.roomId === selectedRoom.id)}
                 states={states}
-              />
+              />}
             </section>
           </div>
         </main>
@@ -156,7 +163,7 @@ function RoomCard({
   selected,
   onClick,
 }: {
-  room: (typeof rooms)[number];
+  room: RoomModel;
   selected: boolean;
   onClick: () => void;
 }) {
@@ -282,7 +289,7 @@ function RoomControlPanel({
   devices,
   states,
 }: {
-  room: (typeof rooms)[number];
+  room: RoomModel;
   devices: Device[];
   states: Record<string, DeviceState>;
 }) {
@@ -365,6 +372,11 @@ function RoomControlPanel({
   );
 }
 
+type RoomModel = {
+  id: string; name: string; icon: React.ElementType; devicesOn: number;
+  temperature: string; scene: string; active: boolean; tone: string;
+};
+
 function roomDeviceIcon(device: Device) {
   if (device.type === "THERMOSTAT") return Snowflake;
   if (device.type === "BLIND") return VenetianMask;
@@ -372,10 +384,17 @@ function roomDeviceIcon(device: Device) {
   return Lightbulb;
 }
 
-function roomDeviceMeta(device: Device, state: DeviceState) {
+export function roomDeviceMeta(device: Device, state: DeviceState) {
+  const reportedPower = state.reported.on ? "On" : "Off";
+  if (state.connectivity === "OFFLINE") return `Offline · last reported ${reportedPower}`;
+  if (["PENDING", "ACCEPTED"].includes(state.commandStatus)) return `Command pending · reported ${reportedPower}`;
+  if (state.commandStatus === "FAILED") return `Command failed · reported ${reportedPower}`;
+  if (state.commandStatus === "TIMEOUT") return `Command timed out · reported ${reportedPower}`;
+  if (device.type === "LIGHT" && state.commandStatus === "EXECUTED") return `${reportedPower} · command executed`;
   if (device.type === "LIGHT" && state.reported.brightness !== undefined) return `Brightness: ${state.reported.brightness}%`;
   if (device.type === "THERMOSTAT") return `Setting: ${state.reported.targetTemperature ?? 22}°C`;
   if (device.type === "BLIND") return `Status: ${state.reported.open ? "Open" : "Closed"}`;
   if (device.type === "SPEAKER") return state.reported.playing ? "Playing: Lo-fi Chill" : "Paused";
-  return state.connectivity === "ONLINE" ? "Connected" : "Offline";
+  if (device.type === "LIGHT") return `Connected · ${reportedPower}`;
+  return "Connected";
 }

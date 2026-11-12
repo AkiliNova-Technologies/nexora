@@ -27,12 +27,14 @@ import Link from "next/link";
 
 export function NavUser({
   user,
+  onLogout,
 }: {
   user: {
     name: string;
     email: string;
     avatar: string;
   };
+  onLogout?: () => void;
 }) {
   const { isMobile } = useSidebar();
 
@@ -113,7 +115,7 @@ export function NavUser({
 
             <DropdownMenuSeparator className="bg-white/10" />
 
-            <DropdownMenuItem disabled className="opacity-50">
+            <DropdownMenuItem onSelect={onLogout} disabled={!onLogout}>
               <LogOutIcon />
               Sign out
             </DropdownMenuItem>

@@ -1,12 +1,18 @@
 export type HouseId = string;
 export type RoomId = string;
 export type DeviceId = string;
+export type EstateId = string;
 
 export interface House {
   id: HouseId;
   name: string;
   timezone: string;
 }
+export interface Estate { id: EstateId; name: string; timezone: string }
+
+export type SecurityMode = "DISARMED" | "ARMED_HOME" | "ARMED_AWAY";
+export interface HouseSecurityMode { houseId: HouseId; mode: SecurityMode; version: number; updatedAt: string }
+export interface SecuritySensorPolicy { houseId: HouseId; deviceId: DeviceId; enabled: boolean; monitorArmedHome: boolean; monitorArmedAway: boolean; version: number; updatedAt: string; metadata: Record<string, unknown> }
 
 export interface Room {
   id: RoomId;
@@ -26,7 +32,8 @@ export type DeviceType =
   | "BLIND"
   | "SPEAKER"
   | "TEMPERATURE_SENSOR"
-  | "HUMIDITY_SENSOR";
+  | "HUMIDITY_SENSOR"
+  | "GATE";
 
 export type DeviceCapability =
   | { type: "POWER" }
@@ -36,15 +43,20 @@ export type DeviceCapability =
   | { type: "LOCK" }
   | { type: "POSITION" }
   | { type: "CAMERA_STREAM" }
-  | { type: "CAMERA_RECORDING" };
+  | { type: "CAMERA_RECORDING" }
+  | { type: "GATE_CONTROL" };
 
 export interface Device {
   id: DeviceId;
-  houseId: HouseId;
+  houseId?: HouseId;
+  estateId?: EstateId;
   roomId?: RoomId;
   name: string;
   type: DeviceType;
   capabilities: DeviceCapability[];
+  executionMode?: "SIMULATED" | "PHYSICAL";
+  /** Effective operations supplied by the authenticated backend. Absent in local mock data. */
+  allowedOperations?: Array<"VIEW" | "READ_STATE" | "COMMAND">;
 }
 
 export type DeviceConnectivity = "ONLINE" | "OFFLINE";
@@ -70,6 +82,11 @@ export interface DeviceStateValues {
   positionPercent?: number;
   recording?: boolean;
   playing?: boolean;
+  motion?: boolean;
+  simulation?: boolean;
+  controllerExecution?: "EXECUTED";
+  lastRequestedOperation?: "OPEN_GATE" | "CLOSE_GATE" | "GET_GATE_STATUS";
+  physicalPositionVerification?: "UNVERIFIED";
 }
 
 export interface DeviceState {
@@ -93,18 +110,25 @@ export type DeviceCommandType =
   | "CLOSE"
   | "STOP"
   | "START_RECORDING"
-  | "STOP_RECORDING";
+  | "STOP_RECORDING"
+  | "OPEN_GATE"
+  | "CLOSE_GATE"
+  | "GET_GATE_STATUS";
 
 export interface DeviceCommand {
   id: string;
   deviceId: DeviceId;
   type: DeviceCommandType;
-  parameters?: { value: number };
+  parameters?: { value: number } | null;
   status: DeviceCommandStatus;
   requestedAt: string;
-  completedAt?: string;
-  error?: string;
+  completedAt?: string | null;
+  error?: string | null;
+  requestedBy?: string | null;
+  physicalPositionVerification?: "UNVERIFIED" | null;
 }
+
+export interface GateResource { device: Device; state: DeviceState; physicalPositionVerification: "UNVERIFIED" }
 
 export interface DeviceTelemetry {
   id: string;
@@ -119,8 +143,10 @@ export interface SecurityEvent {
   id: string;
   houseId: HouseId;
   deviceId?: DeviceId;
-  type: "DOOR_OPENED" | "DOOR_CLOSED" | "MOTION_DETECTED" | "DEVICE_OFFLINE" | "LOCK_CHANGED" | "ALARM";
+  type: "DOOR_OPENED" | "DOOR_CLOSED" | "MOTION_DETECTED" | "MOTION_CLEARED" | "DEVICE_OFFLINE" | "LOCK_CHANGED" | "ALARM";
   severity: "INFO" | "WARNING" | "CRITICAL";
   occurredAt: string;
+  receivedAt?: string;
+  metadata?: Record<string, unknown>;
   acknowledgedAt?: string;
 }

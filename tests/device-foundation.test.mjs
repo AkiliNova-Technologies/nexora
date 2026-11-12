@@ -14,6 +14,21 @@ test("device identities and room relationships are consistent", () => {
   }
 });
 
+test("three room lights use stable independent identities and room mappings", () => {
+  assert.deepEqual(
+    mockDevices.filter(({ id }) => ["dev-living-lights", "dev-kitchen-lights", "dev-bedroom-lights"].includes(id)).map(({ id, roomId }) => [id, roomId]),
+    [["dev-living-lights", "room-living"], ["dev-kitchen-lights", "room-kitchen"], ["dev-bedroom-lights", "room-bedroom"]],
+  );
+});
+
+test("switching one physical room light does not change the others", async () => {
+  const store = new DeviceStore(mockDevices, mockDeviceStates, new MockDeviceSimulator({ status: "EXECUTED" }, 1));
+  await store.sendCommand("dev-kitchen-lights", "TURN_ON");
+  assert.equal(store.getSnapshot().states["dev-kitchen-lights"].reported.on, true);
+  assert.equal(store.getSnapshot().states["dev-bedroom-lights"].reported.on, false);
+  assert.equal(store.getSnapshot().states["dev-living-lights"].reported.on, true);
+});
+
 test("fan and thermostat expose distinct validated controls", () => {
   const fan = mockDevices.find(({ type }) => type === "FAN");
   const thermostat = mockDevices.find(({ type }) => type === "THERMOSTAT");

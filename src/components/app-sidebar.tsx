@@ -8,6 +8,7 @@ import {
   Bot,
   Cpu,
   Home,
+  DoorOpen,
   Lightbulb,
   Lock,
   Thermometer,
@@ -24,6 +25,8 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { useSmartEstate } from "@/components/providers/device-state-provider";
+import { useRouter } from "next/navigation";
 
 const data = {
   user: {
@@ -64,6 +67,11 @@ const data = {
       icon: <Lock />,
     },
     {
+      title: "Entrance Gate",
+      url: "/gate",
+      icon: <DoorOpen />,
+    },
+    {
       title: "Energy",
       url: "/energy",
       icon: <Bolt />,
@@ -72,6 +80,8 @@ const data = {
 };
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const { user, dashboard, eventStatus, logout } = useSmartEstate();
+  const router = useRouter();
   return (
     <Sidebar collapsible="offcanvas" className="border-white/10" {...props}>
       <SidebarHeader className="border-b border-white/10">
@@ -108,7 +118,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <div className="flex items-center gap-2">
               <Activity className="size-4 text-green-400" />
               <span className="text-sm font-medium text-white">
-                Live Status
+                {eventStatus === "live" ? "Live Status" : eventStatus === "reconnecting" ? "Reconnecting" : "System Status"}
               </span>
             </div>
             <span className="size-2 rounded-full bg-green-400 shadow-lg shadow-green-400/50" />
@@ -121,11 +131,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </div>
             <div className="flex items-center justify-between">
               <span>Energy Today</span>
-              <span className="font-medium text-white">18.4 kWh</span>
+                      <span className="font-medium text-white">{dashboard?.energyTodayKwh ?? "—"} kWh</span>
             </div>
             <div className="flex items-center justify-between">
               <span>Security</span>
-              <span className="font-medium text-green-400">Armed</span>
+              <span className="font-medium text-green-400">{dashboard?.securityMode ?? "—"}</span>
             </div>
           </div>
         </div>
@@ -142,7 +152,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarContent>
 
       <SidebarFooter className="border-t border-white/10 p-2">
-        <NavUser user={data.user} />
+        <NavUser user={{ name: user?.name ?? data.user.name, email: user?.email ?? data.user.email, avatar: "" }} onLogout={() => { void logout().finally(() => router.replace("/login")); }} />
       </SidebarFooter>
     </Sidebar>
   );

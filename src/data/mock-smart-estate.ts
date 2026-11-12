@@ -1,10 +1,12 @@
-import type { Device, DeviceState, House, Room } from "../domain/smart-estate.ts";
+import type { Device, DeviceState, House, HouseSecurityMode, Room, SecurityEvent, SecuritySensorPolicy } from "../domain/smart-estate.ts";
 
 export const DEMO_HOUSE_ID = "house-nexora-demo";
 
 export const mockHouses: House[] = [
   { id: DEMO_HOUSE_ID, name: "Nexora Home", timezone: "Africa/Kampala" },
 ];
+export const mockSecurityMode: HouseSecurityMode = { houseId: DEMO_HOUSE_ID, mode: "DISARMED", version: 0, updatedAt: "2026-10-13T09:00:00.000Z" };
+export const mockSecuritySensorPolicies:SecuritySensorPolicy[]=[{houseId:DEMO_HOUSE_ID,deviceId:"dev-living-motion",enabled:true,monitorArmedHome:false,monitorArmedAway:true,version:0,updatedAt:"2026-10-13T09:00:00.000Z",metadata:{source:"mock"}}];
 
 export const mockRooms: Room[] = [
   { id: "room-living", houseId: DEMO_HOUSE_ID, name: "Living Room" },
@@ -19,6 +21,8 @@ export const mockRooms: Room[] = [
 
 export const mockDevices: Device[] = [
   { id: "dev-living-lights", houseId: DEMO_HOUSE_ID, roomId: "room-living", name: "Living Room Lights", type: "LIGHT", capabilities: [{ type: "POWER" }, { type: "BRIGHTNESS", min: 0, max: 100 }] },
+  { id: "dev-kitchen-lights", houseId: DEMO_HOUSE_ID, roomId: "room-kitchen", name: "Kitchen Lights", type: "LIGHT", capabilities: [{ type: "POWER" }] },
+  { id: "dev-bedroom-lights", houseId: DEMO_HOUSE_ID, roomId: "room-bedroom", name: "Bedroom Lights", type: "LIGHT", capabilities: [{ type: "POWER" }] },
   { id: "dev-floor-lamp", houseId: DEMO_HOUSE_ID, roomId: "room-living", name: "Floor Lamp", type: "LIGHT", capabilities: [{ type: "POWER" }] },
   { id: "dev-living-ac", houseId: DEMO_HOUSE_ID, roomId: "room-living", name: "Air Conditioner", type: "THERMOSTAT", capabilities: [{ type: "POWER" }, { type: "TARGET_TEMPERATURE", min: 16, max: 30, unit: "CELSIUS" }] },
   { id: "dev-living-blinds", houseId: DEMO_HOUSE_ID, roomId: "room-living", name: "Window Blinds", type: "BLIND", capabilities: [{ type: "POSITION" }] },
@@ -35,6 +39,8 @@ export const mockDevices: Device[] = [
 
 const initialReported: Record<string, DeviceState["reported"]> = {
   "dev-living-lights": { on: true, brightness: 78, powerWatts: 14 },
+  "dev-kitchen-lights": { on: false },
+  "dev-bedroom-lights": { on: false },
   "dev-floor-lamp": { on: true },
   "dev-living-ac": { on: true, targetTemperature: 22, temperature: 22 },
   "dev-living-blinds": { open: false, positionPercent: 0 },
@@ -45,7 +51,7 @@ const initialReported: Record<string, DeviceState["reported"]> = {
   "dev-front-door-sensor": { open: false, batteryPercent: 86 },
   "dev-office-fan": { on: false, fanSpeed: 35 },
   "dev-front-door-lock": { locked: true },
-  "dev-living-motion": { batteryPercent: 72 },
+  "dev-living-motion": { batteryPercent: 72, motion: false },
   "dev-back-door-sensor": { open: true, batteryPercent: 82 },
 };
 
@@ -66,3 +72,5 @@ export const featuredDeviceIds = [
   "dev-front-door-sensor",
   "dev-office-fan",
 ] as const;
+
+export const mockSecurityEvents: SecurityEvent[] = [{id:"11111111-1111-4111-8111-111111111111",houseId:DEMO_HOUSE_ID,deviceId:"dev-living-motion",type:"MOTION_CLEARED",severity:"INFO",occurredAt:"2026-10-13T09:00:00.000Z"}];

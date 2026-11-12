@@ -1,0 +1,7 @@
+import type { SecuritySensorPolicy } from "../domain/smart-estate.ts";
+export interface SecuritySensorPolicyState{houseId:string|null;policies:SecuritySensorPolicy[];loading:boolean;requestId:number}
+export const emptyPolicyState:SecuritySensorPolicyState={houseId:null,policies:[],loading:false,requestId:0};
+export function reconcilePolicy(current:SecuritySensorPolicy|undefined,incoming:SecuritySensorPolicy,houseId:string){if(incoming.houseId!==houseId)return current;if(current&&current.houseId===houseId&&current.version>=incoming.version)return current;return incoming;}
+export function reconcilePolicyList(current:SecuritySensorPolicy[],incoming:SecuritySensorPolicy,houseId:string){const value=reconcilePolicy(current.find(item=>item.deviceId===incoming.deviceId),incoming,houseId);if(!value)return current;return [...current.filter(item=>item.deviceId!==incoming.deviceId),value].sort((a,b)=>a.deviceId.localeCompare(b.deviceId));}
+export function beginPolicyLoad(_:SecuritySensorPolicyState,houseId:string,requestId:number):SecuritySensorPolicyState{return{houseId,policies:[],loading:true,requestId};}
+export function completePolicyLoad(current:SecuritySensorPolicyState,policies:SecuritySensorPolicy[],houseId:string,requestId:number){if(current.houseId!==houseId||current.requestId!==requestId)return current;return{houseId,policies:policies.filter(item=>item.houseId===houseId),loading:false,requestId};}
