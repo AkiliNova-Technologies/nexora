@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createSupabaseServerClient, requireUser } from "@/lib/supabase/server";
+import { createSupabaseRouteClient, requireUser } from "@/lib/supabase/server";
 import { dashboard, deviceState, devices, houses, profile, rooms, submitCommand } from "@/lib/cloud/repository";
 import { getSql } from "@/lib/cloud/db";
 import { validateMutationRequest } from "@/lib/cloud/security";
@@ -71,20 +71,21 @@ async function mutation(request: NextRequest, context: Context) {
   if (!validateMutationRequest(request)) return jsonError(403, "CSRF_INVALID", "Request validation failed");
   let body: Record<string, unknown> = {};
   try { if (request.body) body = await request.json(); } catch { return jsonError(400, "INVALID_JSON", "A valid JSON body is required"); }
-  const supabase = await createSupabaseServerClient();
+  const routeClient = await createSupabaseRouteClient();
+  const { supabase } = routeClient;
   try {
     if (path.join("/") === "auth/login") {
-      const { error } = await supabase.auth.signInWithPassword({ email: String(body.email || ""), password: String(body.password || "") });
-      if (error) return jsonError(401, "INVALID_CREDENTIALS", "Email or password is incorrect");
-      const user = await authenticated(); return user ? NextResponse.json(await profile(user)) : jsonError(401, "UNAUTHENTICATED", "Authentication failed");
+      const { data, error } = await supabase.auth.signInWithPassword({ email: String(body.email || ""), password: String(body.password || "") });
+      if (error || !data.user) return jsonError(401, "INVALID_CREDENTIALS", "Email or password is incorrect");
+      return routeClient.applyCookies(NextResponse.json(await profile({ id: data.user.id, email: data.user.email || "" })));
     }
     if (path.join("/") === "auth/register") {
       const emailRedirectTo = new URL("/auth/confirm?next=/dashboard", process.env.NEXT_PUBLIC_SITE_URL || request.nextUrl.origin).toString();
       const { data, error } = await supabase.auth.signUp({ email: String(body.email || ""), password: String(body.password || ""), options: { data: { display_name: String(body.name || "").trim() }, emailRedirectTo } });
       if (error || !data.user) return jsonError(400, "REGISTRATION_FAILED", error?.message || "Registration failed");
-      return NextResponse.json({ id: data.user.id, name: String(body.name || "").trim(), email: data.user.email || "", role: "USER", requiresEmailConfirmation: !data.session }, { status: 201 });
+      return routeClient.applyCookies(NextResponse.json({ id: data.user.id, name: String(body.name || "").trim(), email: data.user.email || "", role: "USER", requiresEmailConfirmation: !data.session }, { status: 201 }));
     }
-    if (path.join("/") === "auth/logout") { await supabase.auth.signOut(); return new NextResponse(null, { status: 204 }); }
+    if (path.join("/") === "auth/logout") { await supabase.auth.signOut(); return routeClient.applyCookies(new NextResponse(null, { status: 204 })); }
     const user = await authenticated(); if (!user) return jsonError(401, "UNAUTHENTICATED", "Authentication is required");
     const sql = getSql();
     if (path.length === 3 && path[0] === "devices" && path[2] === "commands") {
