@@ -32,6 +32,27 @@ test("API errors preserve backend status, code, and field errors", async () => {
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("API mutations refresh a stale CSRF token once", async () => {
+  const calls = [];
+  let csrfCount = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith("/csrf")) return Response.json({ token: `csrf-${++csrfCount}` });
+    if (init.headers["X-XSRF-TOKEN"] === "csrf-1") {
+      return Response.json({ code: "CSRF_INVALID", message: "Request validation failed" }, { status: 403 });
+    }
+    return Response.json({ id: "u1", name: "Resident", email: "r@example.com", role: "USER" });
+  };
+  try {
+    const client = new SmartEstateApiClient("http://backend.test/api/v1");
+    await client.login({ email: "r@example.com", password: "password" });
+    assert.equal(calls.length, 4);
+    assert.equal(calls[1].init.headers["X-XSRF-TOKEN"], "csrf-1");
+    assert.equal(calls[3].init.headers["X-XSRF-TOKEN"], "csrf-2");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("backend command mode remains accepted until an SSE state reconciles it", async () => {
   const store = new DeviceStore(mockDevices, mockDeviceStates);
   store.setCommandSender(async (deviceId, type, value, id) => ({ id, deviceId, type, parameters: value === undefined ? null : { value }, status: "ACCEPTED", requestedAt: new Date().toISOString(), completedAt: null, error: null }));

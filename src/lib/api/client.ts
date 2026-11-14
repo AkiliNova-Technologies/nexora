@@ -78,12 +78,21 @@ export class SmartEstateApiClient {
   estateEventUrl(estateId: string) { return `${this.baseUrl}/estates/${estateId}/events`; }
 
   private async mutate<T>(path: string, body?: unknown, method = "POST"): Promise<T> {
-    await this.ensureCsrf();
-    return this.request<T>(path, {
-      method,
-      headers: this.csrfToken ? { "X-XSRF-TOKEN": this.csrfToken } : undefined,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    const send = async () => {
+      await this.ensureCsrf();
+      return this.request<T>(path, {
+        method,
+        headers: this.csrfToken ? { "X-XSRF-TOKEN": this.csrfToken } : undefined,
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    };
+    try {
+      return await send();
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 403 && error.code === "CSRF_INVALID")) throw error;
+      this.csrfToken = undefined;
+      return send();
+    }
   }
 
   private async ensureCsrf() {
