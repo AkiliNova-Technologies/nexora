@@ -12,10 +12,10 @@ import type {
 } from "./contracts.ts";
 import type { Device, DeviceCommand, DeviceState, Estate, GateResource, House, HouseSecurityMode, Room, SecurityEvent, SecuritySensorPolicy } from "../../domain/smart-estate.ts";
 
-export type SmartEstateMode = "MOCK" | "BACKEND";
+export type SmartEstateMode = "MOCK" | "BACKEND" | "CLOUD";
 
-export const smartEstateMode: SmartEstateMode =
-  process.env.NEXT_PUBLIC_SMART_ESTATE_MODE?.toUpperCase() === "BACKEND" ? "BACKEND" : "MOCK";
+const configuredMode = process.env.NEXT_PUBLIC_SMART_ESTATE_MODE?.toUpperCase();
+export const smartEstateMode: SmartEstateMode = configuredMode === "BACKEND" ? "BACKEND" : configuredMode === "CLOUD" ? "CLOUD" : "MOCK";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -41,7 +41,7 @@ export class SmartEstateApiClient {
   private readonly timeoutMs: number;
 
   constructor(
-    baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080/api/v1",
+    baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || (smartEstateMode === "CLOUD" ? "/api/v1" : "http://localhost:8080/api/v1"),
     timeoutMs = 10_000,
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
@@ -67,6 +67,8 @@ export class SmartEstateApiClient {
   updateSecuritySensorPolicy = (houseId:string,deviceId:string,body:SecuritySensorPolicyUpdateRequest) => this.mutate<SecuritySensorPolicy>(`/houses/${houseId}/security-sensor-policies/${deviceId}`,body,"PUT");
   command = (deviceId: string, body: DeviceCommandRequest) =>
     this.mutate<DeviceCommand>(`/devices/${deviceId}/commands`, body);
+  commandStatus = (commandId: string) => this.request<DeviceCommand>(`/device-commands/${commandId}`);
+  cloudSync = (houseId: string) => this.request<{ states: DeviceState[]; commands: DeviceCommand[] }>(`/houses/${houseId}/sync`);
   onboardDemoHouse = () => this.mutate<DevelopmentOnboardingResponse>("/dev/onboarding/demo-house");
 
   eventUrl(houseId: string) {
