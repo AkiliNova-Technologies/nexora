@@ -12,8 +12,11 @@ export default function LoginPage() {
 }
 
 function LoginForm() {
-  const { login, mode } = useSmartEstate(); const router = useRouter(); const search = useSearchParams();
+  const { login, mode, status } = useSmartEstate(); const router = useRouter(); const search = useSearchParams();
   const [error, setError] = React.useState(""); const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    if (status === "authenticated") router.replace(search.get("next") || "/dashboard");
+  }, [router, search, status]);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(""); const data = new FormData(event.currentTarget);
     try { await login({ email: String(data.get("email")), password: String(data.get("password")) }); router.replace(search.get("next") || "/dashboard"); }

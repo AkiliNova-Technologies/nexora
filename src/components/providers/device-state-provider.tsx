@@ -47,6 +47,7 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
   const [policyState,setPolicyState]=React.useState(smartEstateMode==="MOCK"?{houseId:mockHouses[0].id,policies:mockSecuritySensorPolicies,loading:false,requestId:0}:emptyPolicyState);
   const [securitySensorPolicyPendingId,setSecuritySensorPolicyPendingId]=React.useState<string|null>(null);const [securitySensorPolicyError,setSecuritySensorPolicyError]=React.useState<string|null>(null);
   const requestSequence=React.useRef(0);
+  const sessionSequence=React.useRef(0);
 
   const loadHouse = React.useCallback(async (house: House) => {
     const requestId=++requestSequence.current;
@@ -65,7 +66,7 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
   const loadAccount = React.useCallback(async () => {
     const [nextUser, nextHouses] = await Promise.all([smartEstateApi.me(), smartEstateApi.houses()]);
     setUser(nextUser); setHouses(nextHouses); setStatus("authenticated");
-    if (nextHouses[0]) await loadHouse(nextHouses[0]);
+    if (nextHouses[0]) void loadHouse(nextHouses[0]).catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load house"));
     else { setCurrentHouse(null); setRooms([]); setDashboard(null);setSecurityModeState(emptySecurityModeState);setPolicyState(emptyPolicyState); store.replaceInventory([], []); }
   }, [loadHouse, store]);
 
@@ -75,8 +76,10 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
       command: type, parameters: value === undefined ? undefined : { value }, clientRequestId,
     }));
     // Session recovery is the external synchronization performed by this effect.
+    const sequence = sessionSequence.current;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadAccount().catch((cause) => {
+      if (sessionSequence.current !== sequence) return;
       setStatus("anonymous");
       if (!(cause instanceof ApiError && cause.status === 401)) setError(cause instanceof Error ? cause.message : "Session recovery failed");
     });
@@ -115,6 +118,7 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
   React.useEffect(() => {
     if (smartEstateMode !== "CLOUD" || !currentHouseId || status !== "authenticated") return;
     let active = true;
+    let timer: number | undefined;
     const refreshCloudState = async () => {
       try {
         const update = await smartEstateApi.cloudSync(currentHouseId);
@@ -124,18 +128,19 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
         }
         if (active) setEventStatus("live");
       } catch (cause) { if (active) { setEventStatus("reconnecting"); setError(cause instanceof Error ? cause.message : "Cloud state refresh failed"); } }
+      finally { if (active) timer = window.setTimeout(() => void refreshCloudState(), 4000); }
     };
-    const timer = window.setInterval(() => void refreshCloudState(), 4000);
     void refreshCloudState();
-    return () => { active = false; window.clearInterval(timer); setEventStatus("idle"); };
+    return () => { active = false; if (timer !== undefined) window.clearTimeout(timer); setEventStatus("idle"); };
   }, [currentHouseId, status, store]);
 
   const value = React.useMemo<SmartEstateContextValue>(() => ({
     mode: smartEstateMode, status, user, houses, currentHouse, rooms, dashboard, eventStatus, error,securityEvents,securityEventsLoading,securityEventsError,securityMode:securityModeState.value,securityModeLoading:securityModeState.loading,securityModePending,securityModeError,securitySensorPolicies:policyState.policies,securitySensorPoliciesLoading:policyState.loading,securitySensorPolicyPendingId,securitySensorPolicyError,
     async login(request) {
+      sessionSequence.current += 1;
       if (smartEstateMode === "CLOUD") {
         const { error: authError } = await getSupabaseBrowserClient().auth.signInWithPassword(request);
-        if (authError) throw new ApiError("Email or password is incorrect", 401, "INVALID_CREDENTIALS");
+        if (authError) { setStatus("anonymous"); throw new ApiError("Email or password is incorrect", 401, "INVALID_CREDENTIALS"); }
       } else {
         await smartEstateApi.login(request);
       }
