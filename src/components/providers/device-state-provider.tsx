@@ -6,6 +6,7 @@ import type { House, HouseSecurityMode, Room, SecurityEvent, SecurityMode, Secur
 import type { DashboardResponse, LoginRequest, RegisterRequest, SmartEstateEvent, UserResponse } from "@/lib/api/contracts";
 import { ApiError, smartEstateApi, smartEstateMode } from "@/lib/api/client";
 import { DeviceStore } from "@/lib/device-store";
+import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { reconcileSecurityEvents, replaceSecurityEvents } from "@/lib/security-event-store";
 import { emptySecurityModeState, beginSecurityModeLoad, completeSecurityModeLoad, reconcileSecurityMode } from "@/lib/security-mode-store";
 import { emptyPolicyState,beginPolicyLoad,completePolicyLoad,reconcilePolicyList } from "@/lib/security-sensor-policy-store";
@@ -131,8 +132,33 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
 
   const value = React.useMemo<SmartEstateContextValue>(() => ({
     mode: smartEstateMode, status, user, houses, currentHouse, rooms, dashboard, eventStatus, error,securityEvents,securityEventsLoading,securityEventsError,securityMode:securityModeState.value,securityModeLoading:securityModeState.loading,securityModePending,securityModeError,securitySensorPolicies:policyState.policies,securitySensorPoliciesLoading:policyState.loading,securitySensorPolicyPendingId,securitySensorPolicyError,
-    async login(request) { await smartEstateApi.login(request); await loadAccount(); },
+    async login(request) {
+      if (smartEstateMode === "CLOUD") {
+        const { error: authError } = await getSupabaseBrowserClient().auth.signInWithPassword(request);
+        if (authError) throw new ApiError("Email or password is incorrect", 401, "INVALID_CREDENTIALS");
+      } else {
+        await smartEstateApi.login(request);
+      }
+      await loadAccount();
+    },
     async register(request) {
+      if (smartEstateMode === "CLOUD") {
+        const { data, error: authError } = await getSupabaseBrowserClient().auth.signUp({
+          email: request.email,
+          password: request.password,
+          options: {
+            data: { display_name: request.name.trim() },
+            emailRedirectTo: `${window.location.origin}/auth/confirm?next=/dashboard`,
+          },
+        });
+        if (authError) throw new ApiError(authError.message, authError.status ?? 400, "REGISTRATION_FAILED");
+        if (!data.session) {
+          setUser(null); setStatus("anonymous");
+          return true;
+        }
+        await loadAccount();
+        return false;
+      }
       const result = await smartEstateApi.register(request);
       if (result.requiresEmailConfirmation) {
         setUser(null); setStatus("anonymous");
@@ -141,7 +167,7 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
       await loadAccount();
       return false;
     },
-    async logout() { if (smartEstateMode !== "MOCK") await smartEstateApi.logout(); setUser(null); setStatus("anonymous"); setHouses([]); setCurrentHouse(null); setRooms([]);setSecurityModeState(emptySecurityModeState);setPolicyState(emptyPolicyState); store.replaceInventory([], []); },
+    async logout() { if (smartEstateMode === "CLOUD") { const { error: authError } = await getSupabaseBrowserClient().auth.signOut(); if (authError) throw new ApiError(authError.message, authError.status ?? 400, "LOGOUT_FAILED"); } else if (smartEstateMode !== "MOCK") await smartEstateApi.logout(); setUser(null); setStatus("anonymous"); setHouses([]); setCurrentHouse(null); setRooms([]);setSecurityModeState(emptySecurityModeState);setPolicyState(emptyPolicyState); store.replaceInventory([], []); },
     selectHouse(id) { const house = houses.find((item) => item.id === id); if (house && house.id !== currentHouse?.id) void loadHouse(house).catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load house")); },
     async onboardDemoHouse() { await smartEstateApi.onboardDemoHouse(); await loadAccount(); },
     async refresh() { if (smartEstateMode !== "MOCK") await loadAccount(); },
