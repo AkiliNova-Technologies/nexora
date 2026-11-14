@@ -18,7 +18,7 @@ interface SmartEstateContextValue {
   securityMode: HouseSecurityMode | null; securityModeLoading:boolean; securityModePending:boolean; securityModeError:string|null;
   securitySensorPolicies:SecuritySensorPolicy[];securitySensorPoliciesLoading:boolean;securitySensorPolicyPendingId:string|null;securitySensorPolicyError:string|null;
   eventStatus: "idle" | "connecting" | "live" | "reconnecting"; error: string | null;
-  login(request: LoginRequest): Promise<void>; register(request: RegisterRequest): Promise<void>;
+  login(request: LoginRequest): Promise<void>; register(request: RegisterRequest): Promise<boolean>;
   logout(): Promise<void>; selectHouse(id: string): void; onboardDemoHouse(): Promise<void>; refresh(): Promise<void>; changeSecurityMode(mode:SecurityMode):Promise<void>;changeSecuritySensorPolicy(deviceId:string,change:Pick<SecuritySensorPolicy,"enabled"|"monitorArmedHome"|"monitorArmedAway">):Promise<void>;
 }
 
@@ -132,7 +132,15 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
   const value = React.useMemo<SmartEstateContextValue>(() => ({
     mode: smartEstateMode, status, user, houses, currentHouse, rooms, dashboard, eventStatus, error,securityEvents,securityEventsLoading,securityEventsError,securityMode:securityModeState.value,securityModeLoading:securityModeState.loading,securityModePending,securityModeError,securitySensorPolicies:policyState.policies,securitySensorPoliciesLoading:policyState.loading,securitySensorPolicyPendingId,securitySensorPolicyError,
     async login(request) { await smartEstateApi.login(request); await loadAccount(); },
-    async register(request) { await smartEstateApi.register(request); await loadAccount(); },
+    async register(request) {
+      const result = await smartEstateApi.register(request);
+      if (result.requiresEmailConfirmation) {
+        setUser(null); setStatus("anonymous");
+        return true;
+      }
+      await loadAccount();
+      return false;
+    },
     async logout() { if (smartEstateMode !== "MOCK") await smartEstateApi.logout(); setUser(null); setStatus("anonymous"); setHouses([]); setCurrentHouse(null); setRooms([]);setSecurityModeState(emptySecurityModeState);setPolicyState(emptyPolicyState); store.replaceInventory([], []); },
     selectHouse(id) { const house = houses.find((item) => item.id === id); if (house && house.id !== currentHouse?.id) void loadHouse(house).catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load house")); },
     async onboardDemoHouse() { await smartEstateApi.onboardDemoHouse(); await loadAccount(); },

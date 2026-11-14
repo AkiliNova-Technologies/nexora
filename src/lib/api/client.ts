@@ -5,6 +5,7 @@ import type {
   DeviceCommandRequest,
   LoginRequest,
   RegisterRequest,
+  RegisterResponse,
   SecurityModeChangeRequest,
   SecuritySensorPolicyUpdateRequest,
   UserResponse,
@@ -48,7 +49,7 @@ export class SmartEstateApiClient {
     this.timeoutMs = timeoutMs;
   }
 
-  register = (body: RegisterRequest) => this.mutate<UserResponse>("/auth/register", body);
+  register = (body: RegisterRequest) => this.mutate<RegisterResponse>("/auth/register", body);
   login = (body: LoginRequest) => this.mutate<UserResponse>("/auth/login", body);
   logout = () => this.mutate<void>("/auth/logout");
   me = () => this.request<UserResponse>("/me");

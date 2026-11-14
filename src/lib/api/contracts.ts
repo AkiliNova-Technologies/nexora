@@ -37,6 +37,9 @@ export interface UserResponse {
   email: string;
   role: "USER";
 }
+export interface RegisterResponse extends UserResponse {
+  requiresEmailConfirmation?: boolean;
+}
 
 export interface DeviceCommandRequest {
   command: DeviceCommandType;
@@ -74,7 +77,7 @@ export interface DevelopmentOnboardingResponse {
 }
 
 export interface ApiContract {
-  "POST /auth/register": { request: RegisterRequest; response: UserResponse };
+  "POST /auth/register": { request: RegisterRequest; response: RegisterResponse };
   "POST /auth/login": { request: LoginRequest; response: UserResponse };
   "POST /auth/logout": { request: undefined; response: undefined };
   "GET /me": { request: undefined; response: UserResponse };

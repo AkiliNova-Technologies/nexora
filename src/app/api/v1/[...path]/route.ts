@@ -79,9 +79,10 @@ async function mutation(request: NextRequest, context: Context) {
       const user = await authenticated(); return user ? NextResponse.json(await profile(user)) : jsonError(401, "UNAUTHENTICATED", "Authentication failed");
     }
     if (path.join("/") === "auth/register") {
-      const { data, error } = await supabase.auth.signUp({ email: String(body.email || ""), password: String(body.password || ""), options: { data: { display_name: String(body.name || "").trim() } } });
+      const emailRedirectTo = new URL("/auth/confirm?next=/dashboard", process.env.NEXT_PUBLIC_SITE_URL || request.nextUrl.origin).toString();
+      const { data, error } = await supabase.auth.signUp({ email: String(body.email || ""), password: String(body.password || ""), options: { data: { display_name: String(body.name || "").trim() }, emailRedirectTo } });
       if (error || !data.user) return jsonError(400, "REGISTRATION_FAILED", error?.message || "Registration failed");
-      return NextResponse.json({ id: data.user.id, name: String(body.name || "").trim(), email: data.user.email || "", role: "USER" }, { status: 201 });
+      return NextResponse.json({ id: data.user.id, name: String(body.name || "").trim(), email: data.user.email || "", role: "USER", requiresEmailConfirmation: !data.session }, { status: 201 });
     }
     if (path.join("/") === "auth/logout") { await supabase.auth.signOut(); return new NextResponse(null, { status: 204 }); }
     const user = await authenticated(); if (!user) return jsonError(401, "UNAUTHENTICATED", "Authentication is required");
