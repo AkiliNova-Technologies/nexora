@@ -77,7 +77,11 @@ async function mutation(request: NextRequest, context: Context) {
     if (path.join("/") === "auth/login") {
       const { data, error } = await supabase.auth.signInWithPassword({ email: String(body.email || ""), password: String(body.password || "") });
       if (error || !data.user) return jsonError(401, "INVALID_CREDENTIALS", "Email or password is incorrect");
-      return routeClient.applyCookies(NextResponse.json(await profile({ id: data.user.id, email: data.user.email || "" })));
+      const email = data.user.email || "";
+      const displayName = typeof data.user.user_metadata?.display_name === "string" && data.user.user_metadata.display_name.trim()
+        ? data.user.user_metadata.display_name.trim()
+        : email.split("@")[0];
+      return routeClient.applyCookies(NextResponse.json({ id: data.user.id, name: displayName, email, role: "USER" }));
     }
     if (path.join("/") === "auth/register") {
       const emailRedirectTo = new URL("/auth/confirm?next=/dashboard", process.env.NEXT_PUBLIC_SITE_URL || request.nextUrl.origin).toString();

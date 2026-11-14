@@ -43,7 +43,7 @@ export class SmartEstateApiClient {
 
   constructor(
     baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || (smartEstateMode === "CLOUD" ? "/api/v1" : "http://localhost:8080/api/v1"),
-    timeoutMs = 10_000,
+    timeoutMs = 30_000,
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.timeoutMs = timeoutMs;
