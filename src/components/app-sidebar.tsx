@@ -3,15 +3,11 @@
 import * as React from "react";
 import {
   Activity,
-  BarChart3,
-  Bolt,
-  Bot,
   Cpu,
   Home,
   DoorOpen,
   Lightbulb,
   Lock,
-  Thermometer,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -52,16 +48,6 @@ const data = {
       icon: <Cpu />,
     },
     {
-      title: "Automation",
-      url: "/automation",
-      icon: <Bot />,
-    },
-    {
-      title: "Analytics",
-      url: "/analytics",
-      icon: <BarChart3 />,
-    },
-    {
       title: "Security",
       url: "/security",
       icon: <Lock />,
@@ -71,16 +57,11 @@ const data = {
       url: "/gate",
       icon: <DoorOpen />,
     },
-    {
-      title: "Energy",
-      url: "/energy",
-      icon: <Bolt />,
-    },
   ],
 };
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const { user, dashboard, eventStatus, logout } = useSmartEstate();
+  const { user, houses, currentHouse, eventStatus, logout, selectHouse } = useSmartEstate();
   const router = useRouter();
   return (
     <Sidebar collapsible="offcanvas" className="border-white/10" {...props}>
@@ -113,42 +94,31 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarContent className="px-2 py-4">
         <NavMain items={data.navMain} />
 
+        {houses.length > 1 && <label className="mx-2 mt-4 block text-xs text-muted-foreground lg:hidden"><span className="mb-2 block">Selected house</span><select aria-label="Select house" value={currentHouse?.id ?? ""} onChange={(event)=>selectHouse(event.target.value)} className="h-10 w-full rounded-xl border border-white/10 bg-[#111827] px-3 text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><option value="" disabled>Select a house</option>{houses.map(house=><option key={house.id} value={house.id}>{house.name}</option>)}</select></label>}
+
         <div className="mx-2 mt-6 rounded-xl border border-white/10 bg-white/[0.04] p-4">
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Activity className="size-4 text-green-400" />
+              <Activity className={eventStatus === "live" ? "size-4 text-green-400" : eventStatus === "reconnecting" ? "size-4 text-amber-400" : "size-4 text-muted-foreground"} />
               <span className="text-sm font-medium text-white">
                 {eventStatus === "live" ? "Live Status" : eventStatus === "reconnecting" ? "Reconnecting" : "System Status"}
               </span>
             </div>
-            <span className="size-2 rounded-full bg-green-400 shadow-lg shadow-green-400/50" />
+            <span className={eventStatus === "live" ? "size-2 rounded-full bg-green-400" : eventStatus === "reconnecting" ? "size-2 rounded-full bg-amber-400" : "size-2 rounded-full bg-slate-500"} />
           </div>
 
           <div className="space-y-3 text-xs text-muted-foreground">
             <div className="flex items-center justify-between">
-              <span>Temperature</span>
-              <span className="font-medium text-white">24°C</span>
+              <span>Cloud connection</span>
+              <span className="font-medium capitalize text-white">{eventStatus === "idle" ? "Unknown" : eventStatus}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Energy Today</span>
-                      <span className="font-medium text-white">{dashboard?.energyTodayKwh ?? "—"} kWh</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>Security</span>
-              <span className="font-medium text-green-400">{dashboard?.securityMode ?? "—"}</span>
+              <span>House</span>
+              <span className="max-w-32 truncate font-medium text-white">{currentHouse?.name ?? "Not assigned"}</span>
             </div>
           </div>
         </div>
 
-        <div className="mx-2 mt-4 rounded-xl border border-blue-500/20 bg-blue-500/10 p-4">
-          <div className="flex items-center gap-2">
-            <Thermometer className="size-4 text-blue-400" />
-            <p className="text-sm font-medium text-white">Cooling Optimized</p>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-muted-foreground">
-            Automation reduced energy usage by 12% this week.
-          </p>
-        </div>
       </SidebarContent>
 
       <SidebarFooter className="border-t border-white/10 p-2">

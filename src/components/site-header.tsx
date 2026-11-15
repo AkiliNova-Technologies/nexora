@@ -4,7 +4,8 @@ import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Bell, Search, ShieldCheck } from "lucide-react";
+import { Bell, Cloud, CloudOff, Search } from "lucide-react";
+import { useSmartEstate } from "@/components/providers/device-state-provider";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 
 const pageMeta: Record<string, { title: string; description: string }> = {
@@ -52,6 +53,7 @@ const pageMeta: Record<string, { title: string; description: string }> = {
 
 export function SiteHeader() {
   const pathname = usePathname();
+  const { eventStatus, user, houses, currentHouse, selectHouse } = useSmartEstate();
 
   const currentPage =
     pageMeta[pathname] ??
@@ -89,9 +91,10 @@ export function SiteHeader() {
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="hidden items-center gap-2 rounded-full border border-green-500/20 bg-green-500/10 px-3 py-2 text-xs font-medium text-green-400 sm:flex">
-            <ShieldCheck className="size-4" />
-            System Secure
+          {houses.length > 1 && <label className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex"><span>House</span><select aria-label="Select house" value={currentHouse?.id ?? ""} onChange={(event)=>selectHouse(event.target.value)} className="h-9 max-w-44 rounded-xl border border-white/10 bg-[#111827] px-3 text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><option value="" disabled>Select a house</option>{houses.map(house=><option key={house.id} value={house.id}>{house.name}</option>)}</select></label>}
+          <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-muted-foreground sm:flex">
+            {eventStatus === "live" ? <Cloud className="size-4 text-green-400" /> : <CloudOff className="size-4 text-amber-400" />}
+            {eventStatus === "live" ? "Cloud connected" : eventStatus === "reconnecting" ? "Cloud reconnecting" : "Cloud status unknown"}
           </div>
 
           <Button
@@ -105,7 +108,7 @@ export function SiteHeader() {
 
           <Avatar className="h-9 w-9 rounded-xl">
             <AvatarFallback className="rounded-xl bg-blue-500 text-white">
-              A
+              {(user?.name ?? "User").slice(0, 1).toUpperCase()}
             </AvatarFallback>
           </Avatar>
         </div>

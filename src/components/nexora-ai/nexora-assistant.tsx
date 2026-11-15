@@ -1,10 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Bot, LoaderCircle, Mic, MicOff, Send, Volume2, VolumeX, X } from "lucide-react";
+import { Bot, LoaderCircle, Mic, MicOff, RotateCcw, Send, Square, Volume2, VolumeX, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDeviceStore, useDevices, useSmartEstate } from "@/components/providers/device-state-provider";
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
@@ -32,7 +31,7 @@ function message(kind: AssistantMessage["kind"], text: string, phase?: Assistant
 
 export function NexoraAssistant() {
   const pathname = usePathname();
-  const { status, user, houses, currentHouse, rooms, securityMode, securityEvents, changeSecurityMode } = useSmartEstate();
+  const { status, user, houses, currentHouse, rooms, securityMode, securityEvents, eventStatus, error: backendError, changeSecurityMode } = useSmartEstate();
   const snapshot = useDevices();
   const store = useDeviceStore();
   const [open, setOpen] = React.useState(false);
@@ -221,6 +220,7 @@ export function NexoraAssistant() {
   }, [respond, snapshot.commands, snapshot.devices]);
 
   function close() { recognition.stop(); speech.cancel(); setOpen(false); setPhase("idle"); }
+  function resetConversation() { recognition.stop(); speech.cancel(); setMessages([]); setInput(""); setPhase("idle"); contextRef.current = createContext(user?.id ?? "anonymous", currentHouse?.id ?? null); }
   if (status !== "authenticated" || publicRoutes.has(pathname)) return null;
   const suggestions = snapshot.devices.filter((device) => (device.type === "LIGHT" || device.type === "FAN") && (!device.allowedOperations || device.allowedOperations.includes("COMMAND"))).slice(0, 2).map((device) => `${device.type === "FAN" ? "Turn on" : "Check"} ${device.name}${device.type === "LIGHT" ? " status" : ""}`);
 
@@ -228,23 +228,25 @@ export function NexoraAssistant() {
     {open && <section role="dialog" aria-modal="false" aria-labelledby="nexora-ai-title" className="fixed inset-x-3 bottom-3 z-50 flex max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#111827]/98 shadow-2xl shadow-black/50 backdrop-blur-xl sm:inset-auto sm:right-5 sm:bottom-24 sm:h-[min(680px,calc(100dvh-7rem))] sm:w-[410px]">
       <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3.5">
         <span className="grid size-10 place-items-center rounded-2xl bg-blue-500/15 text-blue-400"><Bot className="size-5" /></span>
-        <div className="min-w-0 flex-1"><h2 id="nexora-ai-title" className="font-semibold text-white">Nexora AI</h2><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className={`size-1.5 rounded-full ${phase === "error" ? "bg-red-400" : phase === "listening" ? "bg-amber-400" : "bg-green-400"}`} />{phaseLabel(recognition.listening ? "listening" : speech.speaking ? "speaking" : phase)}</p></div>
+        <div className="min-w-0 flex-1"><h2 id="nexora-ai-title" className="font-semibold text-white">Nexora AI</h2><p className="truncate text-xs text-muted-foreground">{currentHouse?.name ?? "No house assigned"}</p><p className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className={`size-1.5 rounded-full ${backendError || phase === "error" ? "bg-red-400" : eventStatus === "reconnecting" || phase === "listening" ? "bg-amber-400" : eventStatus === "live" ? "bg-green-400" : "bg-slate-400"}`} />{backendError ? "Backend unavailable" : `${phaseLabel(recognition.listening ? "listening" : speech.speaking ? "speaking" : phase)} · ${eventStatus === "live" ? "connected" : eventStatus === "reconnecting" ? "reconnecting" : "connection unknown"}`}</p></div>
+        <Button variant="ghost" size="icon-sm" aria-label="Reset conversation" title="Reset conversation" onClick={resetConversation}><RotateCcw /></Button>
         <Button variant="ghost" size="icon-sm" aria-label="Close Nexora AI" onClick={close}><X /></Button>
       </header>
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" aria-live="polite">
         {messages.length === 0 && <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><p className="text-sm leading-6 text-white">Hello {user?.name?.split(" ")[0]}, I&apos;m Nexora AI. I can help manage authorized lighting, gate, ventilation, and security features. Ask what I can do, or give me a command.</p><div className="mt-3 flex flex-wrap gap-2">{["What can you do?", ...suggestions, "Check security status"].map((item) => <button key={item} onClick={() => void processCommand(item)} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-white/10 hover:text-white">{item}</button>)}</div></div>}
         {messages.map((item) => <div key={item.id} className={`flex ${item.kind === "user" ? "justify-end" : "justify-start"}`}><div className={`max-w-[86%] rounded-2xl px-3.5 py-2.5 text-sm leading-5 ${item.kind === "user" ? "bg-blue-500 text-white" : item.kind === "status" ? "border border-blue-500/20 bg-blue-500/10 text-blue-100" : item.phase === "error" ? "border border-red-500/20 bg-red-500/10 text-red-100" : "bg-white/[0.06] text-gray-100"}`}><p>{item.text}</p><time className="mt-1 block text-[10px] opacity-55">{new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></div></div>)}
-        {recognition.interim && <div className="text-sm italic text-muted-foreground">{recognition.interim}</div>}
+        {recognition.interim && <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3.5 py-2.5 text-sm italic text-amber-100"><span className="sr-only">Partial transcript: </span>{recognition.interim}</div>}
+        {(phase === "processing" || phase === "executing") && <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status"><LoaderCircle className="size-3.5 animate-spin" />{phase === "processing" ? "Understanding your request…" : "Waiting for authoritative acknowledgement…"}</div>}
         {recognition.error && <p role="alert" className="text-xs text-red-300">{recognition.error}</p>}
       </div>
       <footer className="border-t border-white/10 p-3">
         {recognition.supported === false && <p className="mb-2 text-xs text-amber-300">Voice input is unavailable in this browser. Text commands still work.</p>}
-        <form className="flex items-center gap-2" onSubmit={(event) => { event.preventDefault(); void processCommand(input); }}>
-          <Input value={input} onChange={(event) => setInput(event.target.value)} placeholder={recognition.listening ? "Listening…" : "Ask Nexora AI…"} className="h-11 rounded-xl border-white/10 bg-white/[0.04]" aria-label="Command Nexora AI" />
+        <form className="flex items-end gap-2" onSubmit={(event) => { event.preventDefault(); void processCommand(input); }}>
+          <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event)=>{if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();if(input.trim()&&phase!=="processing"&&phase!=="executing")void processCommand(input);}}} rows={1} placeholder={recognition.listening ? "Listening…" : "Ask Nexora AI…"} className="max-h-28 min-h-11 flex-1 resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-white outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Message Nexora AI" />
           <Button type="button" size="icon" variant={recognition.listening ? "destructive" : "outline"} disabled={recognition.supported !== true} aria-label={recognition.listening ? "Stop listening" : "Start voice input"} onClick={recognition.listening ? recognition.stop : recognition.start}>{recognition.listening ? <MicOff /> : <Mic />}</Button>
           <Button type="submit" size="icon" disabled={!input.trim() || phase === "processing" || phase === "executing"} aria-label="Send command">{phase === "processing" ? <LoaderCircle className="animate-spin" /> : <Send />}</Button>
         </form>
-        <button type="button" onClick={() => { speech.cancel(); speech.setEnabled(!speech.enabled); }} className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-white">{speech.enabled ? <Volume2 className="size-3.5" /> : <VolumeX className="size-3.5" />}{speech.enabled ? "Voice responses on" : "Voice responses off"}</button>
+        <div className="mt-2 flex items-center gap-4"><button type="button" onClick={() => { speech.cancel(); speech.setEnabled(!speech.enabled); }} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-white">{speech.enabled ? <Volume2 className="size-3.5" /> : <VolumeX className="size-3.5" />}{speech.enabled ? "Voice responses on" : "Voice responses off"}</button>{speech.speaking&&<button type="button" onClick={speech.cancel} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-white"><Square className="size-3"/>Stop speaking</button>}</div>
       </footer>
     </section>}
     {!open && <Tooltip><TooltipTrigger asChild><Button onClick={() => setOpen(true)} aria-label="Open Nexora AI" className="fixed right-4 bottom-4 z-40 size-14 rounded-full bg-blue-500 text-white shadow-xl shadow-blue-950/50 hover:bg-blue-400 sm:right-6 sm:bottom-6"><Bot className="size-6" /></Button></TooltipTrigger><TooltipContent side="left">Open Nexora AI</TooltipContent></Tooltip>}

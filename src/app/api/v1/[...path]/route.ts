@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseRouteClient, requireUser } from "@/lib/supabase/server";
-import { dashboard, deviceState, devices, houses, profile, rooms, submitCommand } from "@/lib/cloud/repository";
+import { CommandSubmissionError, dashboard, deviceState, devices, houses, profile, rooms, submitCommand } from "@/lib/cloud/repository";
 import { getSql } from "@/lib/cloud/db";
 import { validateMutationRequest } from "@/lib/cloud/security";
 
@@ -109,7 +109,10 @@ async function mutation(request: NextRequest, context: Context) {
       return rows[0] ? NextResponse.json(rows[0]) : jsonError(409, "VERSION_CONFLICT", "Sensor policy changed; refresh and retry");
     }
     return jsonError(404, "NOT_FOUND", "API route was not found");
-  } catch (error) { console.error("Cloud API mutation failed", { path: path.join("/"), message: error instanceof Error ? error.message : "unknown" }); return jsonError(503, "DATABASE_UNAVAILABLE", "Cloud operation is unavailable"); }
+  } catch (error) {
+    if (error instanceof CommandSubmissionError) return jsonError(error.code === "DEVICE_OFFLINE" ? 409 : 400, error.code, error.message);
+    console.error("Cloud API mutation failed", { path: path.join("/"), message: error instanceof Error ? error.message : "unknown" }); return jsonError(503, "DATABASE_UNAVAILABLE", "Cloud operation is unavailable");
+  }
 }
 
 export const POST = mutation;

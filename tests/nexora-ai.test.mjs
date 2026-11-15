@@ -130,9 +130,10 @@ test("gate confirmation is bound to a command and expires", () => {
   assert.equal(consumeConfirmation(pending, pending.expiresAt), null);
 });
 
-test("gate stop remains unsupported when firmware capability is absent", () => {
+test("gate stop is available only through the explicit gate-control capability", () => {
   const gate = { id: "gate-1", estateId: "estate-1", name: "Main Gate", type: "GATE", capabilities: [{ type: "GATE_CONTROL" }] };
-  assert.equal(resolveControlCommand(parseCommand("Stop the gate"), [gate], []).kind, "unsupported");
+  assert.equal(resolveControlCommand(parseCommand("Stop the gate"), [gate], []).kind, "resolved");
+  assert.equal(resolveControlCommand(parseCommand("Stop the gate"), [{ ...gate, capabilities: [] }], []).kind, "unsupported");
 });
 
 test("capability response reports visible availability without disclosing absent resources", () => {

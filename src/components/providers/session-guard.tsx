@@ -22,7 +22,7 @@ export function SessionGuard({ children }: { children: React.ReactNode }) {
   if (status !== "authenticated") return <CenteredMessage title={status === "loading" ? "Restoring your session…" : "Redirecting to sign in…"} detail={error} />;
   if (mode !== "MOCK" && !currentHouse) {
     const enabled = process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_ENABLE_DEV_ONBOARDING === "true";
-    return <CenteredMessage title="No house is linked to this account" detail={error || "Create the local demo house before opening the dashboard."} action={enabled ? <Button disabled={working} onClick={() => { setWorking(true); void onboardDemoHouse().finally(() => setWorking(false)); }}>{working ? "Creating…" : "Create development demo house"}</Button> : undefined} />;
+    return <CenteredMessage title="No house is linked to this account" detail={error || "Ask an estate administrator to assign this account to a house."} action={enabled ? <Button disabled={working} onClick={() => { setWorking(true); void onboardDemoHouse().finally(() => setWorking(false)); }}>{working ? "Creating…" : "Create development-only house"}</Button> : undefined} />;
   }
   return children;
 }

@@ -1,111 +1,29 @@
 "use client";
-
-import { AppSidebar } from "@/components/app-sidebar";
-import { ChartAreaInteractive } from "@/components/chart-area-interactive";
-import { DataTable } from "@/components/data-table";
+import { Activity, Cpu, History, House, ShieldCheck, WifiOff } from "lucide-react";
+import { DashboardShell } from "@/components/dashboard-shell";
+import { DashboardEmptyState } from "@/components/dashboard-empty-state";
 import { SectionCards, type MetricCardItem } from "@/components/section-cards";
-import { SiteHeader } from "@/components/site-header";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-
-import data from "./data.json";
-import { Activity, Cpu, PlugZap, ShieldCheck } from "lucide-react";
 import { useDevices, useSmartEstate } from "@/components/providers/device-state-provider";
+import { Badge } from "@/components/ui/badge";
 
 export default function DashboardPage() {
-  const { dashboard, currentHouse, eventStatus } = useSmartEstate();
+  const { currentHouse, rooms, securityEvents, securityMode, status, houseLoading, error, eventStatus } = useSmartEstate();
   const { devices, states } = useDevices();
-  const online = dashboard?.onlineDevices ?? Object.values(states).filter((state) => state.connectivity === "ONLINE").length;
+  const online = Object.values(states).filter(s => s.connectivity === "ONLINE").length;
+  const security = securityMode?.mode.replaceAll("_", " ") ?? "Unknown";
   const metrics: MetricCardItem[] = [
-    { title: "Total Devices", value: dashboard?.totalDevices ?? devices.length, badge: `${online} online`, icon: Cpu, tone: "blue", footerTitle: currentHouse?.name ?? "Current house", footerText: `Live updates: ${eventStatus}` },
-    { title: "Online Devices", value: online, badge: devices.length ? `${Math.round((online / devices.length) * 100)}%` : "0%", icon: Activity, tone: "green", footerTitle: "Current connectivity", footerText: "Reported by the device state service" },
-    { title: "Energy Today", value: `${dashboard?.energyTodayKwh ?? 0} kWh`, icon: PlugZap, tone: "amber", footerTitle: "Backend summary", footerText: "Aggregate for the selected house" },
-    { title: "Security Mode", value: dashboard?.securityMode ?? "—", badge: `${dashboard?.activeAutomations ?? 0} automations`, icon: ShieldCheck, tone: "purple", footerTitle: "House security", footerText: "Current dashboard state" },
+    { title: "Registered Devices", value: devices.length, icon: Cpu, tone: "blue", footerText: "Authoritative inventory for this house" },
+    { title: "Online Devices", value: online, icon: Activity, tone: "green", footerText: "Controller-reported connectivity" },
+    { title: "Offline Devices", value: Math.max(0, devices.length - online), icon: WifiOff, tone: "red", footerText: "Registered devices not currently online" },
+    { title: "Security", value: security, icon: ShieldCheck, tone: securityMode ? "purple" : "neutral", footerText: securityMode ? "Current backend security mode" : "Security state unavailable" },
   ];
-  return (
-    <SidebarProvider
-      style={
-        {
-          "--sidebar-width": "calc(var(--spacing) * 72)",
-          "--header-height": "calc(var(--spacing) * 14)",
-        } as React.CSSProperties
-      }
-    >
-      <AppSidebar variant="inset" />
-
-      <SidebarInset className="bg-transparent">
-        <SiteHeader />
-
-        <main className="flex flex-1 flex-col">
-          <div className="@container/main flex flex-1 flex-col gap-2">
-            <div className="flex flex-col gap-5 px-4 py-4 md:gap-6 md:px-6 md:py-6">
-              <section>
-                <p className="text-sm text-muted-foreground">
-                  Real-time smart home intelligence
-                </p>
-                <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white md:text-3xl">
-                  Home Overview
-                </h1>
-              </section>
-
-              <SectionCards items={metrics} />
-
-              <div className="grid gap-5 xl:grid-cols-[1.5fr_0.9fr]">
-                <ChartAreaInteractive />
-
-                <div className="rounded-2xl border border-white/10 bg-card/80 p-5 shadow-xl shadow-black/20 backdrop-blur">
-                  <div className="mb-5">
-                    <h2 className="text-lg font-semibold text-white">
-                      Automation Preview
-                    </h2>
-                    <p className="text-sm text-muted-foreground">
-                      Active smart rules across the home.
-                    </p>
-                  </div>
-
-                  <div className="space-y-4">
-                    {[
-                      {
-                        rule: "Motion detected",
-                        action: "Turn on hallway lights",
-                        status: "Active",
-                      },
-                      {
-                        rule: "Temperature above 30°C",
-                        action: "Activate cooling mode",
-                        status: "Monitoring",
-                      },
-                      {
-                        rule: "Door opened after 10 PM",
-                        action: "Send security alert",
-                        status: "Armed",
-                      },
-                    ].map((item) => (
-                      <div
-                        key={item.rule}
-                        className="rounded-xl border border-white/10 bg-white/[0.03] p-4"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-sm font-medium text-white">
-                            If {item.rule}
-                          </p>
-                          <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-400">
-                            {item.status}
-                          </span>
-                        </div>
-                        <p className="mt-2 text-sm text-muted-foreground">
-                          → {item.action}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <DataTable data={data} />
-            </div>
-          </div>
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
-  );
+  return <DashboardShell>
+    <section><p className="text-sm text-muted-foreground">{currentHouse?.name ?? "No house selected"}</p><h1 className="mt-1 text-3xl font-semibold text-white">Home Overview</h1></section>
+    {error && <div role="alert" className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">{error}</div>}
+    {status === "loading" || houseLoading ? <div className="h-32 animate-pulse rounded-3xl bg-white/[0.04]" aria-label="Loading dashboard" /> : <SectionCards items={metrics} />}
+    <section className="grid gap-5 xl:grid-cols-[1fr_1.4fr]">
+      <div className="rounded-3xl border border-white/10 bg-card/80 p-5"><div className="flex items-start justify-between gap-4"><div><h2 className="font-semibold text-white">House overview</h2><p className="mt-1 text-sm text-muted-foreground">Backend-assigned scope</p></div><Badge variant="outline" className="border-white/10">{eventStatus === "live" ? "Cloud connected" : eventStatus === "reconnecting" ? "Reconnecting" : "Connection unknown"}</Badge></div>{currentHouse ? <dl className="mt-6 grid grid-cols-2 gap-4 text-sm"><div><dt className="text-muted-foreground">House</dt><dd className="mt-1 font-medium text-white">{currentHouse.name}</dd></div><div><dt className="text-muted-foreground">Rooms</dt><dd className="mt-1 font-medium text-white">{rooms.length}</dd></div><div><dt className="text-muted-foreground">Devices</dt><dd className="mt-1 font-medium text-white">{devices.length}</dd></div><div><dt className="text-muted-foreground">Controller</dt><dd className="mt-1 font-medium text-white">{online ? `${online} reporting` : "Unavailable"}</dd></div></dl> : <DashboardEmptyState compact icon={House} title="No house assigned" description="Ask an administrator to link this account to a house." />}</div>
+      <div className="rounded-3xl border border-white/10 bg-card/80 p-5"><h2 className="font-semibold text-white">Recent security activity</h2><p className="mt-1 text-sm text-muted-foreground">Verified sensor events</p>{securityEvents.length ? <div className="mt-5 divide-y divide-white/10">{securityEvents.map(event=><div key={event.id} className="flex items-center justify-between gap-4 py-3 text-sm"><div><p className="font-medium text-white">{event.type.replaceAll("_", " ")}</p><p className="text-muted-foreground">{devices.find(d=>d.id===event.deviceId)?.name ?? "House security"}</p></div><time className="shrink-0 text-xs text-muted-foreground" dateTime={event.occurredAt}>{new Date(event.occurredAt).toLocaleString()}</time></div>)}</div> : <DashboardEmptyState compact icon={History} title="No security events recorded" description="Events from configured sensors will appear here." />}</div>
+    </section>
+  </DashboardShell>;
 }

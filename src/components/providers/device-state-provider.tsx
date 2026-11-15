@@ -14,7 +14,7 @@ import { emptyPolicyState,beginPolicyLoad,completePolicyLoad,reconcilePolicyList
 type SessionStatus = "loading" | "authenticated" | "anonymous";
 interface SmartEstateContextValue {
   mode: "MOCK" | "BACKEND" | "CLOUD"; status: SessionStatus; user: UserResponse | null;
-  houses: House[]; currentHouse: House | null; rooms: Room[]; dashboard: DashboardResponse | null;
+  houses: House[]; currentHouse: House | null; rooms: Room[]; dashboard: DashboardResponse | null; houseLoading:boolean;
   securityEvents: SecurityEvent[]; securityEventsLoading:boolean; securityEventsError:string|null;
   securityMode: HouseSecurityMode | null; securityModeLoading:boolean; securityModePending:boolean; securityModeError:string|null;
   securitySensorPolicies:SecuritySensorPolicy[];securitySensorPoliciesLoading:boolean;securitySensorPolicyPendingId:string|null;securitySensorPolicyError:string|null;
@@ -36,6 +36,7 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
   const currentHouseId = currentHouse?.id;
   const [rooms, setRooms] = React.useState<Room[]>(smartEstateMode === "MOCK" ? mockRooms : []);
   const [dashboard, setDashboard] = React.useState<DashboardResponse | null>(null);
+  const [houseLoading,setHouseLoading]=React.useState(smartEstateMode!=="MOCK");
   const [eventStatus, setEventStatus] = React.useState<SmartEstateContextValue["eventStatus"]>("idle");
   const [error, setError] = React.useState<string | null>(null);
   const [securityEvents,setSecurityEvents]=React.useState<SecurityEvent[]>(smartEstateMode==="MOCK"?mockSecurityEvents:[]);
@@ -51,23 +52,27 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
 
   const loadHouse = React.useCallback(async (house: House) => {
     const requestId=++requestSequence.current;
-    setCurrentHouse(house); setError(null);
+    setCurrentHouse(house); setError(null);setHouseLoading(true);setEventStatus("connecting");
+    setRooms([]);setDashboard(null);store.replaceInventory([],[]);
     setSecurityModeState(current=>beginSecurityModeLoad(current,house.id,requestId));setSecurityModeError(null);
     setPolicyState(current=>beginPolicyLoad(current,house.id,requestId));setSecuritySensorPolicyError(null);
     setSecurityEventsLoading(true);setSecurityEventsError(null);setSecurityEvents([]);
-    const [nextRooms, devices, nextDashboard,history,nextSecurityMode,nextPolicies] = await Promise.all([
-      smartEstateApi.rooms(house.id), smartEstateApi.devices(house.id), smartEstateApi.dashboard(house.id),smartEstateApi.securityEvents(house.id).catch((cause)=>{setSecurityEventsError(cause instanceof Error?cause.message:"Unable to load security activity");return [];}),smartEstateApi.securityMode(house.id),smartEstateApi.securitySensorPolicies(house.id),
-    ]);
-    if(requestSequence.current!==requestId)return;
-    const states = await Promise.all(devices.map((device) => smartEstateApi.state(device.id)));
-    setRooms(nextRooms); setDashboard(nextDashboard); store.replaceInventory(devices, states);setSecurityEvents(replaceSecurityEvents(history,house.id,new Set(devices.map(device=>device.id))));setSecurityEventsLoading(false);setSecurityModeState(current=>completeSecurityModeLoad(current,nextSecurityMode,house.id,requestId));setPolicyState(current=>completePolicyLoad(current,nextPolicies,house.id,requestId));
+    try {
+      const [nextRooms, devices, nextDashboard,history,nextSecurityMode,nextPolicies] = await Promise.all([
+        smartEstateApi.rooms(house.id), smartEstateApi.devices(house.id), smartEstateApi.dashboard(house.id),smartEstateApi.securityEvents(house.id).catch((cause)=>{setSecurityEventsError(cause instanceof Error?cause.message:"Unable to load security activity");return [];}),smartEstateApi.securityMode(house.id),smartEstateApi.securitySensorPolicies(house.id),
+      ]);
+      if(requestSequence.current!==requestId)return;
+      const states = await Promise.all(devices.map((device) => smartEstateApi.state(device.id)));
+      if(requestSequence.current!==requestId)return;
+      setRooms(nextRooms); setDashboard(nextDashboard); store.replaceInventory(devices, states);setSecurityEvents(replaceSecurityEvents(history,house.id,new Set(devices.map(device=>device.id))));setSecurityModeState(current=>completeSecurityModeLoad(current,nextSecurityMode,house.id,requestId));setPolicyState(current=>completePolicyLoad(current,nextPolicies,house.id,requestId));
+    } finally { if(requestSequence.current===requestId){setHouseLoading(false);setSecurityEventsLoading(false);} }
   }, [store]);
 
   const loadAccount = React.useCallback(async () => {
     const [nextUser, nextHouses] = await Promise.all([smartEstateApi.me(), smartEstateApi.houses()]);
     setUser(nextUser); setHouses(nextHouses); setStatus("authenticated");
     if (nextHouses[0]) void loadHouse(nextHouses[0]).catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load house"));
-    else { setCurrentHouse(null); setRooms([]); setDashboard(null);setSecurityModeState(emptySecurityModeState);setPolicyState(emptyPolicyState); store.replaceInventory([], []); }
+    else { setCurrentHouse(null); setRooms([]); setDashboard(null);setHouseLoading(false);setSecurityModeState(emptySecurityModeState);setPolicyState(emptyPolicyState); store.replaceInventory([], []); }
   }, [loadHouse, store]);
 
   React.useEffect(() => {
@@ -126,7 +131,7 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
           for (const state of update.states) store.reconcileState(state);
           for (const command of update.commands) store.reconcileCommand(command);
         }
-        if (active) setEventStatus("live");
+        if (active) { setEventStatus("live"); setError(null); }
       } catch (cause) { if (active) { setEventStatus("reconnecting"); setError(cause instanceof Error ? cause.message : "Cloud state refresh failed"); } }
       finally { if (active) timer = window.setTimeout(() => void refreshCloudState(), 4000); }
     };
@@ -135,7 +140,7 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
   }, [currentHouseId, status, store]);
 
   const value = React.useMemo<SmartEstateContextValue>(() => ({
-    mode: smartEstateMode, status, user, houses, currentHouse, rooms, dashboard, eventStatus, error,securityEvents,securityEventsLoading,securityEventsError,securityMode:securityModeState.value,securityModeLoading:securityModeState.loading,securityModePending,securityModeError,securitySensorPolicies:policyState.policies,securitySensorPoliciesLoading:policyState.loading,securitySensorPolicyPendingId,securitySensorPolicyError,
+    mode: smartEstateMode, status, user, houses, currentHouse, rooms, dashboard,houseLoading,eventStatus, error,securityEvents,securityEventsLoading,securityEventsError,securityMode:securityModeState.value,securityModeLoading:securityModeState.loading,securityModePending,securityModeError,securitySensorPolicies:policyState.policies,securitySensorPoliciesLoading:policyState.loading,securitySensorPolicyPendingId,securitySensorPolicyError,
     async login(request) {
       sessionSequence.current += 1;
       if (smartEstateMode === "CLOUD") {
@@ -178,7 +183,7 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
     async refresh() { if (smartEstateMode !== "MOCK") await loadAccount(); },
     async changeSecurityMode(nextMode){if(!currentHouse||!securityModeState.value||securityModePending)return;if(smartEstateMode==="MOCK"){setSecurityModeState(current=>({...current,value:current.value?{...current.value,mode:nextMode,version:current.value.version+1,updatedAt:new Date().toISOString()}:null}));return;}const house=currentHouse;const generation=requestSequence.current;setSecurityModePending(true);setSecurityModeError(null);try{const result=await smartEstateApi.updateSecurityMode(house.id,{mode:nextMode,expectedVersion:securityModeState.value.version,clientRequestId:crypto.randomUUID()});if(requestSequence.current===generation&&house.id===result.houseId)setSecurityModeState(current=>({...current,value:reconcileSecurityMode(current.value,result,result.houseId),loading:false}));}catch(cause){if(requestSequence.current===generation)setSecurityModeError(cause instanceof Error?cause.message:"Unable to change security mode");if(cause instanceof ApiError&&cause.status===409&&requestSequence.current===generation)await loadHouse(house);throw cause;}finally{if(requestSequence.current===generation)setSecurityModePending(false);}},
     async changeSecuritySensorPolicy(deviceId,change){const current=policyState.policies.find(item=>item.deviceId===deviceId);if(!currentHouse||!current||securitySensorPolicyPendingId)return;if(smartEstateMode==="MOCK"){setPolicyState(state=>({...state,policies:reconcilePolicyList(state.policies,{...current,...change,version:current.version+1,updatedAt:new Date().toISOString()},current.houseId)}));return;}const house=currentHouse,generation=requestSequence.current;setSecuritySensorPolicyPendingId(deviceId);setSecuritySensorPolicyError(null);try{const result=await smartEstateApi.updateSecuritySensorPolicy(house.id,deviceId,{...change,expectedVersion:current.version,clientRequestId:crypto.randomUUID()});if(generation===requestSequence.current&&result.houseId===house.id)setPolicyState(state=>({...state,policies:reconcilePolicyList(state.policies,result,house.id)}));}catch(cause){if(generation===requestSequence.current)setSecuritySensorPolicyError(cause instanceof Error?cause.message:"Unable to update sensor policy");if(cause instanceof ApiError&&cause.status===409&&generation===requestSequence.current)await loadHouse(house);throw cause;}finally{if(generation===requestSequence.current)setSecuritySensorPolicyPendingId(null);}},
-  }), [currentHouse, dashboard, error, eventStatus, houses, loadAccount, loadHouse, policyState, rooms, securityEvents,securityEventsError,securityEventsLoading,securityModeError,securityModePending,securityModeState,securitySensorPolicyError,securitySensorPolicyPendingId,status, store, user]);
+  }), [currentHouse, dashboard, error, eventStatus, houseLoading,houses, loadAccount, loadHouse, policyState, rooms, securityEvents,securityEventsError,securityEventsLoading,securityModeError,securityModePending,securityModeState,securitySensorPolicyError,securitySensorPolicyPendingId,status, store, user]);
 
   return <SmartEstateContext.Provider value={value}><DeviceStoreContext.Provider value={store}>{children}</DeviceStoreContext.Provider></SmartEstateContext.Provider>;
 }

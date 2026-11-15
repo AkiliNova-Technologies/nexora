@@ -3,12 +3,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Activity,
-  AlertTriangle,
-  Cpu,
   Lightbulb,
   LucideIcon,
-  PlugZap,
   TrendingDownIcon,
   TrendingUpIcon,
 } from "lucide-react";
@@ -28,49 +24,6 @@ export type MetricCardItem = {
   tone?: MetricTone;
 };
 
-const defaultMetrics: MetricCardItem[] = [
-  {
-    title: "Total Devices",
-    value: "42",
-    badge: "+6 online",
-    trend: "up",
-    icon: Cpu,
-    footerTitle: "All smart zones connected",
-    footerText: "Lights, sensors, plugs, thermostats, and security devices",
-    tone: "blue",
-  },
-  {
-    title: "Active Devices",
-    value: "31",
-    badge: "74%",
-    trend: "up",
-    icon: Activity,
-    footerTitle: "Healthy activity level",
-    footerText: "Most devices are responding in real time",
-    tone: "green",
-  },
-  {
-    title: "Energy Usage",
-    value: "18.4 kWh",
-    badge: "-12%",
-    trend: "down",
-    icon: PlugZap,
-    footerTitle: "Energy usage reduced",
-    footerText: "Automation lowered consumption this week",
-    tone: "amber",
-  },
-  {
-    title: "Alerts",
-    value: "3",
-    badge: "Needs review",
-    trend: "neutral",
-    icon: AlertTriangle,
-    footerTitle: "Security checks pending",
-    footerText: "Motion, door, and temperature alerts detected",
-    tone: "red",
-  },
-];
-
 const toneClasses: Record<MetricTone, string> = {
   blue: "border-blue-500/20 bg-blue-500/10 text-blue-400",
   green: "border-green-500/20 bg-green-500/10 text-green-400",
@@ -85,7 +38,7 @@ type SectionCardsProps = {
   className?: string;
 };
 
-export function SectionCards({ items = defaultMetrics, className }: SectionCardsProps) {
+export function SectionCards({ items = [], className }: SectionCardsProps) {
   return (
     <div
       className={cn(

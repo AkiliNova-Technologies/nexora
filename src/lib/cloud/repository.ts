@@ -1,9 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { getSql } from "./db";
+import type { Device } from "../../domain/smart-estate.ts";
+import { validateCommand } from "../device-capabilities.ts";
 
 type User = { id: string; email: string };
 const commandTypes = new Set(["TURN_ON", "TURN_OFF", "SET_BRIGHTNESS", "SET_FAN_SPEED", "SET_TARGET_TEMPERATURE", "LOCK", "UNLOCK", "OPEN", "CLOSE", "STOP", "START_RECORDING", "STOP_RECORDING", "OPEN_GATE", "CLOSE_GATE", "GET_GATE_STATUS"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export class CommandSubmissionError extends Error {
+  constructor(public readonly code: "INVALID_COMMAND" | "DEVICE_OFFLINE", message: string) { super(message); }
+}
 
 export async function profile(user: User) {
   const sql = getSql();
@@ -28,6 +34,13 @@ export async function devices(userId: string, houseId: string) {
   return rows.map((row) => ({ id: row.id, houseId: row.house_id, estateId: row.estate_id, roomId: row.room_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_command ? ["VIEW", "READ_STATE", "COMMAND"] : ["VIEW", "READ_STATE"] }));
 }
 
+export async function authorizedDevice(userId: string, deviceId: string): Promise<Device | null> {
+  const sql = getSql();
+  const rows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,case when d.house_id is not null then smart_estate.can_control_house(${userId}::uuid,d.house_id) else smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type) end can_command from smart_estate.device d where d.id=${deviceId} and ((d.house_id is not null and smart_estate.can_view_house(${userId}::uuid,d.house_id)) or (d.estate_id is not null and smart_estate.can_view_estate(${userId}::uuid,d.estate_id))) limit 1`;
+  const row = rows[0];
+  return row ? { id: row.id, houseId: row.house_id, estateId: row.estate_id, roomId: row.room_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_command ? ["VIEW", "READ_STATE", "COMMAND"] : ["VIEW", "READ_STATE"] } as Device : null;
+}
+
 export async function deviceState(userId: string, deviceId: string) {
   const sql = getSql();
   const rows = await sql`select s.device_id,s.connectivity,s.desired,s.reported,s.command_status,s.last_reported_at from smart_estate.device_state s join smart_estate.device d on d.id=s.device_id where s.device_id=${deviceId} and ((d.house_id is not null and smart_estate.can_view_house(${userId}::uuid,d.house_id)) or (d.estate_id is not null and smart_estate.can_view_estate(${userId}::uuid,d.estate_id)))`;
@@ -45,11 +58,17 @@ export async function submitCommand(userId: string, deviceId: string, body: Reco
   const sql = getSql();
   const type = typeof body.command === "string" ? body.command : "";
   const requestId = typeof body.clientRequestId === "string" ? body.clientRequestId : "";
-  if (!commandTypes.has(type) || !requestId || requestId.length > 120) throw new Error("INVALID_COMMAND");
+  if (!commandTypes.has(type) || !requestId || requestId.length > 120) throw new CommandSubmissionError("INVALID_COMMAND", "A valid command and request ID are required");
   const parameters = body.parameters && typeof body.parameters === "object" ? body.parameters : null;
   const rows = await sql.begin(async (tx) => {
-    const allowed = await tx`select d.id,d.gateway_id,d.type,d.house_id,d.estate_id from smart_estate.device d where d.id=${deviceId} and d.gateway_id is not null and ((d.house_id is not null and smart_estate.can_control_house(${userId}::uuid,d.house_id)) or (d.estate_id is not null and smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type))) for update`;
+    const allowed = await tx`select d.id,d.gateway_id,d.type,d.house_id,d.estate_id,d.room_id,d.name,d.capabilities,d.execution_mode,s.connectivity from smart_estate.device d left join smart_estate.device_state s on s.device_id=d.id where d.id=${deviceId} and d.gateway_id is not null and ((d.house_id is not null and smart_estate.can_control_house(${userId}::uuid,d.house_id)) or (d.estate_id is not null and smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type))) for update of d`;
     if (!allowed[0]) return [];
+    const record = allowed[0];
+    const device = { id: record.id, houseId: record.house_id, estateId: record.estate_id, roomId: record.room_id, name: record.name, type: record.type, capabilities: record.capabilities, executionMode: record.execution_mode, allowedOperations: ["VIEW", "READ_STATE", "COMMAND"] } as Device;
+    const value = parameters && "value" in parameters ? Number((parameters as { value?: unknown }).value) : undefined;
+    const validationError = validateCommand(device, type as Parameters<typeof validateCommand>[1], value);
+    if (validationError) throw new CommandSubmissionError("INVALID_COMMAND", validationError);
+    if (record.connectivity !== "ONLINE") throw new CommandSubmissionError("DEVICE_OFFLINE", `${device.name} is offline`);
     const commandId = randomUUID();
     const inserted = await tx`insert into smart_estate.device_command(id,device_id,gateway_id,client_request_id,type,parameters,status,requested_by,requested_at,expires_at) values(${commandId}::uuid,${deviceId},${allowed[0].gateway_id},${requestId},${type},${tx.json(parameters)},'PENDING',${userId}::uuid,now(),now()+interval '30 seconds') on conflict(device_id,client_request_id) do update set client_request_id=excluded.client_request_id returning id,device_id,type,parameters,status,requested_at,completed_at,error,requested_by`;
     if (inserted[0]?.id === commandId) {

@@ -4,17 +4,11 @@ import * as React from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
-  BellRing,
   Camera,
   DoorOpen,
-  Eye,
-  Lock,
   LockKeyhole,
-  Plus,
   Radar,
-  ShieldAlert,
   ShieldCheck,
-  Siren,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -34,49 +28,6 @@ import { getCapability } from "@/lib/device-capabilities";
 type SecurityStatus = "safe" | "warning" | "alert";
 type DeviceStatus = "online" | "offline" | "warning";
 
-const securityMetrics: MetricCardItem[] = [
-  {
-    title: "Security Mode",
-    value: "Armed",
-    badge: "Night",
-    trend: "up",
-    icon: ShieldCheck,
-    tone: "green",
-    footerTitle: "Protection active",
-    footerText: "Doors, motion sensors, and cameras are being monitored.",
-  },
-  {
-    title: "Active Sensors",
-    value: "12",
-    badge: "92%",
-    trend: "up",
-    icon: Radar,
-    tone: "blue",
-    footerTitle: "Sensor network healthy",
-    footerText: "Most security devices are reporting in real time.",
-  },
-  {
-    title: "Warnings",
-    value: "2",
-    badge: "Review",
-    trend: "neutral",
-    icon: AlertTriangle,
-    tone: "amber",
-    footerTitle: "Attention required",
-    footerText: "Motion and door events need confirmation.",
-  },
-  {
-    title: "Offline Devices",
-    value: "1",
-    badge: "Camera",
-    trend: "neutral",
-    icon: WifiOff,
-    tone: "red",
-    footerTitle: "Connection issue",
-    footerText: "Garage camera needs reconnection.",
-  },
-];
-
 const securityDeviceIconMap = {
   CAMERA: Camera,
   LOCK: LockKeyhole,
@@ -91,12 +42,19 @@ const statusStyles = {
 };
 
 export default function SecurityPage() {
-  const {securityMode,securityModeLoading,securityModePending,securityModeError,changeSecurityMode}=useSmartEstate();
+  const {securityMode,securityModeLoading,securityModePending,securityModeError,changeSecurityMode,securityEvents}=useSmartEstate();
+  const {devices,states}=useDevices();
   const mode=securityMode?.mode??"DISARMED";
   const systemStatus: SecurityStatus =
     mode === "DISARMED" ? "warning" : "safe";
   const modeLabel=mode==="ARMED_AWAY"?"Armed Away":mode==="ARMED_HOME"?"Armed Home":"Disarmed";
-  const metrics=securityMetrics.map((item,index)=>index===0?{...item,value:securityModeLoading?"Loading…":modeLabel,badge:`v${securityMode?.version??0}`,footerTitle:mode==="DISARMED"?"Monitoring only":"Protection active",footerText:mode==="DISARMED"?"Sensor activity is recorded without intrusion alerts.":"Backend-authoritative security mode is active."}:item);
+  const sensors=devices.filter(device=>["MOTION_SENSOR","CONTACT_SENSOR"].includes(device.type));
+  const metrics:MetricCardItem[]=[
+    {title:"Security Mode",value:securityModeLoading?"Loading…":securityMode?modeLabel:"Unknown",icon:ShieldCheck,tone:securityMode?"green":"neutral",footerText:securityMode?"Backend-authoritative security mode.":"Security configuration is unavailable."},
+    {title:"Registered Sensors",value:sensors.length,icon:Radar,tone:"blue",footerText:"Security sensors assigned to this house."},
+    {title:"Recorded Events",value:securityEvents.length,icon:AlertTriangle,tone:"amber",footerText:"Recent events returned by the backend."},
+    {title:"Offline Sensors",value:sensors.filter(device=>states[device.id]?.connectivity==="OFFLINE").length,icon:WifiOff,tone:"red",footerText:"Sensors without confirmed connectivity."},
+  ];
 
   return (
     <SidebarProvider
@@ -124,17 +82,12 @@ export default function SecurityPage() {
                 </h1>
               </div>
 
-              <Button className="w-fit rounded-2xl bg-blue-500 px-5 text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400">
-                <Plus className="size-4" />
-                Add Security Device
-              </Button>
             </section>
 
             <SectionCards items={metrics} />
 
-            <section className="grid gap-5 xl:grid-cols-[1fr_0.85fr]">
-              <SecurityStatusPanel mode={mode} status={systemStatus} loading={securityModeLoading} pending={securityModePending} error={securityModeError} onChange={changeSecurityMode} />
-              <QuickActions />
+            <section className="grid gap-5">
+              <SecurityStatusPanel mode={mode} available={Boolean(securityMode)} status={systemStatus} loading={securityModeLoading} pending={securityModePending} error={securityModeError} onChange={changeSecurityMode} />
             </section>
 
             <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
@@ -150,11 +103,11 @@ export default function SecurityPage() {
 
 function SecurityStatusPanel({
   mode,
-  status,
+  status, available,
   loading,pending,error,onChange,
 }: {
   mode: SecurityMode;
-  status: SecurityStatus;
+  status: SecurityStatus; available:boolean;
   loading:boolean;pending:boolean;error:string|null;onChange:(mode:SecurityMode)=>Promise<void>;
 }) {
   const labels:Record<SecurityMode,string>={DISARMED:"Disarmed",ARMED_HOME:"Armed Home",ARMED_AWAY:"Armed Away"};
@@ -188,11 +141,11 @@ function SecurityStatusPanel({
             </Badge>
 
             <h2 className="text-2xl font-semibold text-white">
-              Security system is {loading?"loading":labels[mode]}
+              Security system is {loading?"loading":available?labels[mode]:"unavailable"}
             </h2>
 
             <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-              Nexora is actively monitoring access points, room motion, and camera health.
+              {loading ? "Loading security configuration." : mode === "DISARMED" ? "Sensors may record activity, but intrusion alerts are not armed." : "Configured security sensors participate according to their backend policies."}
             </p>
           </div>
         </div>
@@ -205,7 +158,7 @@ function SecurityStatusPanel({
               key={item}
               variant="outline"
               onClick={() => void onChange(item).catch(()=>undefined)}
-              disabled={loading||pending}
+              disabled={loading||pending||!available}
               className={cn(
                 "rounded-2xl border-white/10 bg-transparent text-muted-foreground hover:bg-white/10 hover:text-white",
                 mode === item && "border-blue-500/20 bg-blue-500/15 text-blue-400"
@@ -226,49 +179,6 @@ function SecurityStatusPanel({
   );
 }
 
-function QuickActions() {
-  const actions = [
-    { label: "Lock All", icon: Lock, tone: "blue" },
-    { label: "Panic Alert", icon: Siren, tone: "red" },
-    { label: "Silence Alerts", icon: BellRing, tone: "amber" },
-    { label: "View Cameras", icon: Eye, tone: "green" },
-  ];
-
-  return (
-    <section className="rounded-[2rem] border border-white/10 bg-card/80 p-5 shadow-xl shadow-black/20 backdrop-blur">
-      <div className="mb-5">
-        <h2 className="text-lg font-semibold text-white">Quick Actions</h2>
-        <p className="text-sm text-muted-foreground">
-          Critical controls for immediate response.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        {actions.map((action) => {
-          const Icon = action.icon;
-
-          return (
-            <Button
-              key={action.label}
-              variant="outline"
-              className={cn(
-                "h-24 flex-col rounded-xl border-white/10 bg-white/[0.04] text-white hover:bg-white/10",
-                action.tone === "red" && "hover:border-red-500/30 hover:text-red-400",
-                action.tone === "green" && "hover:border-green-500/30 hover:text-green-400",
-                action.tone === "amber" && "hover:border-amber-500/30 hover:text-amber-400",
-                action.tone === "blue" && "hover:border-blue-500/30 hover:text-blue-400"
-              )}
-            >
-              <Icon className="size-5" />
-              <span>{action.label}</span>
-            </Button>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 function SecurityDeviceGrid() {
   const { devices, states } = useDevices();
   const {rooms}=useSmartEstate();
@@ -284,10 +194,6 @@ function SecurityDeviceGrid() {
             Cameras, locks, sensors, and access monitors.
           </p>
         </div>
-        <Badge variant="outline" className="rounded-full border-green-500/20 bg-green-500/10 text-green-400">
-          <Wifi className="mr-1 size-3.5" />
-          Live
-        </Badge>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -418,15 +324,6 @@ function SecurityEventsFeed() {
         })}
       </div>
 
-      <div className="mt-5 rounded-xl border border-blue-500/20 bg-blue-500/10 p-4">
-        <div className="flex items-center gap-2 text-blue-400">
-          <ShieldAlert className="size-4" />
-          <span className="text-sm font-semibold">Automation linked</span>
-        </div>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Door and motion events can trigger alerts, lights, or camera recording.
-        </p>
-      </div>
     </section>
   );
 }

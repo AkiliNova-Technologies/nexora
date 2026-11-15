@@ -8,7 +8,6 @@ import {
   Fan,
   Lightbulb,
   PlugZap,
-  Plus,
   Search,
   ShieldCheck,
   SlidersHorizontal,
@@ -38,41 +37,27 @@ function deviceMetrics(total: number, online: number): MetricCardItem[] { return
     title: "Total Devices",
     value: total,
     badge: `${online} online`,
-    trend: "up",
     icon: Cpu,
     tone: "blue",
-    footerTitle: "Device network active",
-    footerText: "All major rooms have connected smart devices.",
+    footerTitle: "Registered inventory",
+    footerText: "Devices returned by the selected house backend.",
   },
   {
     title: "Online Devices",
     value: online,
     badge: total ? `${Math.round((online / total) * 100)}%` : "0%",
-    trend: "up",
     icon: Wifi,
     tone: "green",
-    footerTitle: "Stable connectivity",
-    footerText: "Most devices are responding in real time.",
+    footerTitle: "Confirmed connectivity",
+    footerText: "Online status comes from device state reports.",
   },
   {
     title: "Offline Devices",
     value: total - online,
-    badge: "Needs check",
-    trend: "neutral",
     icon: WifiOff,
     tone: "red",
     footerTitle: "Maintenance required",
     footerText: "Some devices need reconnection or power checks.",
-  },
-  {
-    title: "Energy Load",
-    value: "2.4 kW",
-    badge: "-12%",
-    trend: "down",
-    icon: PlugZap,
-    tone: "amber",
-    footerTitle: "Usage optimized",
-    footerText: "Automation is reducing unnecessary consumption.",
   },
 ]; }
 
@@ -96,7 +81,7 @@ export default function DevicesPage() {
   const [query, setQuery] = React.useState("");
   const [view, setView] = React.useState<"grid" | "compact">("grid");
   const { devices, states } = useDevices();
-  const { rooms, dashboard, eventStatus, mode } = useSmartEstate();
+  const { rooms, eventStatus, mode, houseLoading, error } = useSmartEstate();
   const roomNames = React.useMemo(() => Object.fromEntries(rooms.map((room) => [room.id, room.name])), [rooms]);
 
   const filteredDevices = devices.filter((device) =>
@@ -132,13 +117,9 @@ export default function DevicesPage() {
               </div>
               <Badge variant="outline" className="w-fit rounded-full border-white/10 text-muted-foreground">{mode} · {eventStatus}</Badge>
 
-              <Button className="w-fit rounded-2xl bg-blue-500 px-5 text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400">
-                <Plus className="size-4" />
-                Add Device
-              </Button>
             </section>
 
-            <SectionCards items={deviceMetrics(devices.length, dashboard?.onlineDevices ?? Object.values(states).filter((state) => state.connectivity === "ONLINE").length)} />
+            <SectionCards items={deviceMetrics(devices.length, Object.values(states).filter((state) => state.connectivity === "ONLINE").length)} />
 
             <section className="rounded-3xl border border-white/10 bg-card/80 p-4 shadow-xl shadow-black/20 backdrop-blur">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -195,6 +176,9 @@ export default function DevicesPage() {
                   compact={view === "compact"}
                 />
               ))}
+              {houseLoading && <div className="col-span-full h-48 animate-pulse rounded-3xl bg-white/[0.04]" aria-label="Loading devices"/>}
+              {!houseLoading&&error&&<div role="alert" className="col-span-full rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">{error}</div>}
+              {!houseLoading&&!error&&devices.length === 0 && <div className="col-span-full rounded-3xl border border-dashed border-white/10 bg-card/60 p-10 text-center"><Cpu className="mx-auto size-6 text-muted-foreground"/><h2 className="mt-4 font-semibold text-white">No devices connected yet</h2><p className="mt-2 text-sm text-muted-foreground">Devices registered to this house will appear here once configured.</p></div>}
             </section>
           </div>
         </main>
@@ -289,11 +273,11 @@ function DeviceControl({
 function getDeviceReading(device: Device, state: DeviceState) {
   switch (device.type) {
     case "LIGHT": return `${state.reported.brightness ?? (state.reported.on ? 100 : 0)}%`;
-    case "THERMOSTAT": return `${state.reported.targetTemperature ?? 22}°C`;
+    case "THERMOSTAT": return state.reported.targetTemperature == null ? "—" : `${state.reported.targetTemperature}°C`;
     case "FAN": return `${state.reported.fanSpeed ?? 0}%`;
     case "SMART_PLUG": return `${state.reported.powerWatts ?? 0}W`;
     case "CAMERA": return state.connectivity === "OFFLINE" ? "No feed" : "Live";
-    case "CONTACT_SENSOR": return `${state.reported.batteryPercent ?? 0}% battery`;
+    case "CONTACT_SENSOR": return state.reported.batteryPercent == null ? "Reporting" : `${state.reported.batteryPercent}% battery`;
     default:
       return state.connectivity === "ONLINE" ? "Reporting" : "Unavailable";
   }
@@ -303,9 +287,9 @@ function deviceMeta(device: Device) {
   if (getCapability(device, "BRIGHTNESS")) return "Brightness control";
   if (getCapability(device, "FAN_SPEED")) return "Speed control";
   if (getCapability(device, "TARGET_TEMPERATURE")) return "Cooling mode";
-  if (device.type === "SMART_PLUG") return "High usage detected";
+  if (device.type === "SMART_PLUG") return "Power control";
   if (device.type === "CAMERA") return "Camera monitoring";
-  return "Battery level";
+  return "Status reporting";
 }
 
 function DeviceCard({
@@ -382,8 +366,8 @@ function DeviceCard({
         />
 
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>{device.id}</span>
-          <span>{busy ? state.commandStatus : enabled ? "Active" : "Inactive"}</span>
+          <span>{new Date(state.lastReportedAt).toLocaleString()}</span>
+          <span>{busy ? state.commandStatus : state.commandStatus === "FAILED" || state.commandStatus === "TIMEOUT" ? state.commandStatus : enabled ? "Active" : "Inactive"}</span>
         </div>
       </div>
     </div>

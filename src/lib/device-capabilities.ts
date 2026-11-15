@@ -35,7 +35,7 @@ export function getCapability<T extends DeviceCapability["type"]>(
 
 export function supportsCommand(device: Device, command: DeviceCommandType) {
   if (device.allowedOperations && !device.allowedOperations.includes("COMMAND")) return false;
-  const required = commandCapability[command];
+  const required = command === "STOP" && device.type === "GATE" ? "GATE_CONTROL" : commandCapability[command];
   return required !== undefined && getCapability(device, required) !== undefined;
 }
 
@@ -44,7 +44,7 @@ export function validateCommand(
   command: DeviceCommandType,
   value?: number,
 ): string | null {
-  const capabilityType = commandCapability[command];
+  const capabilityType = command === "STOP" && device.type === "GATE" ? "GATE_CONTROL" : commandCapability[command];
   if (!capabilityType || !supportsCommand(device, command)) {
     return `${device.name} does not support ${command}`;
   }
