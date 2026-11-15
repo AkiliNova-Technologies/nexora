@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSql } from "@/lib/cloud/db";
+import { elapsedMs, logServerTiming } from "@/lib/cloud/timing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,21 +17,24 @@ function diagnosticCode(error: unknown) {
 }
 
 export async function GET() {
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   try {
     const sql = getSql();
     await sql`select 1 as ready`;
+    const latencyMs = elapsedMs(startedAt);
+    logServerTiming("database.health", { outcome: "ready", totalMs: latencyMs });
     return NextResponse.json(
-      { status: "ready", latencyMs: Date.now() - startedAt },
+      { status: "ready", latencyMs },
       { headers: { "Cache-Control": "private, no-store, max-age=0" } },
     );
   } catch (error) {
+    const code = diagnosticCode(error);
     console.error("Database readiness check failed", {
-      code: diagnosticCode(error),
-      message: error instanceof Error ? error.message : "unknown",
+      code,
+      totalMs: elapsedMs(startedAt),
     });
     return NextResponse.json(
-      { status: "unavailable", code: diagnosticCode(error) },
+      { status: "unavailable", code },
       { status: 503, headers: { "Cache-Control": "private, no-store, max-age=0" } },
     );
   }

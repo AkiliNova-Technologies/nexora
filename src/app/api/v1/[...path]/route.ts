@@ -3,6 +3,7 @@ import { createSupabaseRouteClient, requireUser } from "@/lib/supabase/server";
 import { CommandSubmissionError, dashboard, deviceState, devices, houses, profile, rooms, submitCommand } from "@/lib/cloud/repository";
 import { getSql } from "@/lib/cloud/db";
 import { validateMutationRequest } from "@/lib/cloud/security";
+import { diagnosticRoute, elapsedMs, logServerTiming } from "@/lib/cloud/timing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,9 +16,17 @@ async function authenticated() {
 }
 
 export async function GET(request: NextRequest, context: Context) {
+  const startedAt = performance.now();
   const path = (await context.params).path;
+  const route = diagnosticRoute(path);
+  const authStartedAt = performance.now();
   const user = await authenticated();
-  if (!user) return jsonError(401, "UNAUTHENTICATED", "Authentication is required");
+  const authMs = elapsedMs(authStartedAt);
+  if (!user) {
+    logServerTiming("cloud.api.request", { method: "GET", route, outcome: "unauthenticated", authMs, totalMs: elapsedMs(startedAt) });
+    return jsonError(401, "UNAUTHENTICATED", "Authentication is required");
+  }
+  let outcome = "completed";
   try {
     const sql = getSql();
     if (path.length === 1 && path[0] === "me") return NextResponse.json(await profile(user));
@@ -63,7 +72,13 @@ export async function GET(request: NextRequest, context: Context) {
       return NextResponse.json({ device: { id: row.id, estateId: row.estate_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_control_gate ? ["VIEW","READ_STATE","COMMAND"] : ["VIEW","READ_STATE"] }, state: { deviceId: row.id, connectivity: row.connectivity, desired: row.desired, reported: row.reported, commandStatus: row.command_status, lastReportedAt: row.last_reported_at }, physicalPositionVerification: "UNVERIFIED" });
     }
     return jsonError(404, "NOT_FOUND", "API route was not found");
-  } catch (error) { console.error("Cloud API read failed", { path: path.join("/"), message: error instanceof Error ? error.message : "unknown" }); return jsonError(503, "DATABASE_UNAVAILABLE", "Cloud data is unavailable"); }
+  } catch (error) {
+    outcome = "database_unavailable";
+    console.error("Cloud API read failed", { route, errorCode: error && typeof error === "object" && "code" in error ? String(error.code) : "UNKNOWN", authMs, totalMs: elapsedMs(startedAt) });
+    return jsonError(503, "DATABASE_UNAVAILABLE", "Cloud data is unavailable");
+  } finally {
+    logServerTiming("cloud.api.request", { method: "GET", route, outcome, authMs, operationMs: elapsedMs(startedAt) - authMs, totalMs: elapsedMs(startedAt) });
+  }
 }
 
 async function mutation(request: NextRequest, context: Context) {

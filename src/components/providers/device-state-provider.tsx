@@ -10,6 +10,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { reconcileSecurityEvents, replaceSecurityEvents } from "@/lib/security-event-store";
 import { emptySecurityModeState, beginSecurityModeLoad, completeSecurityModeLoad, reconcileSecurityMode } from "@/lib/security-mode-store";
 import { emptyPolicyState,beginPolicyLoad,completePolicyLoad,reconcilePolicyList } from "@/lib/security-sensor-policy-store";
+import { cloudSyncDelay } from "@/lib/cloud-sync";
 
 type SessionStatus = "loading" | "authenticated" | "anonymous";
 interface SmartEstateContextValue {
@@ -57,15 +58,20 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
     setSecurityModeState(current=>beginSecurityModeLoad(current,house.id,requestId));setSecurityModeError(null);
     setPolicyState(current=>beginPolicyLoad(current,house.id,requestId));setSecuritySensorPolicyError(null);
     setSecurityEventsLoading(true);setSecurityEventsError(null);setSecurityEvents([]);
+    const isCurrent=()=>requestSequence.current===requestId;
+    const roomsPromise=smartEstateApi.rooms(house.id),devicesPromise=smartEstateApi.devices(house.id),dashboardPromise=smartEstateApi.dashboard(house.id);
+    void Promise.all([smartEstateApi.securityEvents(house.id),devicesPromise]).then(([history,devices])=>{if(isCurrent())setSecurityEvents(replaceSecurityEvents(history,house.id,new Set(devices.map(device=>device.id))));}).catch((cause)=>{if(isCurrent())setSecurityEventsError(cause instanceof Error?cause.message:"Unable to load security activity");}).finally(()=>{if(isCurrent())setSecurityEventsLoading(false);});
+    void smartEstateApi.securityMode(house.id).then(value=>{if(isCurrent())setSecurityModeState(current=>completeSecurityModeLoad(current,value,house.id,requestId));}).catch((cause)=>{if(isCurrent()){setSecurityModeState(current=>({...current,loading:false}));setSecurityModeError(cause instanceof Error?cause.message:"Unable to load security mode");}});
+    void smartEstateApi.securitySensorPolicies(house.id).then(value=>{if(isCurrent())setPolicyState(current=>completePolicyLoad(current,value,house.id,requestId));}).catch((cause)=>{if(isCurrent()){setPolicyState(current=>({...current,loading:false}));setSecuritySensorPolicyError(cause instanceof Error?cause.message:"Unable to load security sensor policies");}});
     try {
-      const [nextRooms, devices, nextDashboard,history,nextSecurityMode,nextPolicies] = await Promise.all([
-        smartEstateApi.rooms(house.id), smartEstateApi.devices(house.id), smartEstateApi.dashboard(house.id),smartEstateApi.securityEvents(house.id).catch((cause)=>{setSecurityEventsError(cause instanceof Error?cause.message:"Unable to load security activity");return [];}),smartEstateApi.securityMode(house.id),smartEstateApi.securitySensorPolicies(house.id),
+      const [nextRooms, devices, nextDashboard] = await Promise.all([
+        roomsPromise,devicesPromise,dashboardPromise,
       ]);
       if(requestSequence.current!==requestId)return;
       const states = await Promise.all(devices.map((device) => smartEstateApi.state(device.id)));
       if(requestSequence.current!==requestId)return;
-      setRooms(nextRooms); setDashboard(nextDashboard); store.replaceInventory(devices, states);setSecurityEvents(replaceSecurityEvents(history,house.id,new Set(devices.map(device=>device.id))));setSecurityModeState(current=>completeSecurityModeLoad(current,nextSecurityMode,house.id,requestId));setPolicyState(current=>completePolicyLoad(current,nextPolicies,house.id,requestId));
-    } finally { if(requestSequence.current===requestId){setHouseLoading(false);setSecurityEventsLoading(false);} }
+      setRooms(nextRooms); setDashboard(nextDashboard); store.replaceInventory(devices, states);
+    } finally { if(requestSequence.current===requestId)setHouseLoading(false); }
   }, [store]);
 
   const loadAccount = React.useCallback(async () => {
@@ -124,19 +130,28 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
     if (smartEstateMode !== "CLOUD" || !currentHouseId || status !== "authenticated") return;
     let active = true;
     let timer: number | undefined;
+    let failures = 0;
+    const isDocumentHidden=()=>document.visibilityState==="hidden";
     const refreshCloudState = async () => {
+      if (isDocumentHidden()) {
+        if (active) timer = window.setTimeout(() => void refreshCloudState(), cloudSyncDelay(failures, true));
+        return;
+      }
       try {
         const update = await smartEstateApi.cloudSync(currentHouseId);
         if (active) {
           for (const state of update.states) store.reconcileState(state);
           for (const command of update.commands) store.reconcileCommand(command);
         }
+        failures = 0;
         if (active) { setEventStatus("live"); setError(null); }
-      } catch (cause) { if (active) { setEventStatus("reconnecting"); setError(cause instanceof Error ? cause.message : "Cloud state refresh failed"); } }
-      finally { if (active) timer = window.setTimeout(() => void refreshCloudState(), 4000); }
+      } catch (cause) { failures += 1; if (active) { setEventStatus("reconnecting"); setError(cause instanceof Error ? cause.message : "Cloud state refresh failed"); } }
+      finally { if (active) timer = window.setTimeout(() => void refreshCloudState(), cloudSyncDelay(failures, isDocumentHidden())); }
     };
+    const onVisibilityChange=()=>{if(document.visibilityState==="visible"&&active){if(timer!==undefined)window.clearTimeout(timer);void refreshCloudState();}};
+    document.addEventListener("visibilitychange",onVisibilityChange);
     void refreshCloudState();
-    return () => { active = false; if (timer !== undefined) window.clearTimeout(timer); setEventStatus("idle"); };
+    return () => { active = false; document.removeEventListener("visibilitychange",onVisibilityChange);if (timer !== undefined) window.clearTimeout(timer); setEventStatus("idle"); };
   }, [currentHouseId, status, store]);
 
   const value = React.useMemo<SmartEstateContextValue>(() => ({
