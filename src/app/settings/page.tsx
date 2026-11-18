@@ -37,6 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { AlexaIntegrationCard } from "@/components/integrations/alexa-integration-card";
 
 export default function SettingsPage() {
   const [theme, setTheme] = React.useState("dark");
@@ -175,6 +176,10 @@ export default function SettingsPage() {
                   "Show low battery warnings",
                 ]}
               />
+            </section>
+
+            <section>
+              <AlexaIntegrationCard />
             </section>
           </div>
         </main>

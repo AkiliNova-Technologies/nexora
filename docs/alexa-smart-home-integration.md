@@ -2,7 +2,7 @@
 
 ## Current readiness
 
-The browser assistant is implemented locally and uses the authenticated dashboard inventory and existing device-command lifecycle. Alexa directive translation and mock tests are implemented in `src/lib/alexa/smart-home.ts`. No Alexa skill, AWS Lambda, OAuth client, MQTT broker, or physical controller was provisioned or verified by this change.
+The browser assistant remains implemented over the authenticated dashboard inventory and existing device-command lifecycle. Alexa Phase 1 now includes the Smart Home v3 adapter, Nexora OAuth endpoints, signed backend directive endpoint, persistent replay protection, real integration status/revocation UI, and an uploadable Lambda package. See `docs/alexa-phase-1-deployment.md` for the authoritative deployment configuration. No AWS resource, production deployment, database migration, MQTT broker, or physical controller was changed or verified by this implementation.
 
 ## Browser voice architecture
 
@@ -25,9 +25,9 @@ Amazon documentation used for the integration contract:
 - PowerController: <https://developer.amazon.com/en-US/docs/alexa/device-apis/alexa-powercontroller.html>
 - Account linking authorization-code grant: <https://developer.amazon.com/en-US/docs/alexa/account-linking/configure-authorization-code-grant.html>
 
-## Required account-linking implementation
+## Account-linking implementation
 
-Supabase Auth is not automatically an Alexa-compatible OAuth authorization server. Before deployment, Nexora needs a reviewed OAuth 2.0 authorization-code adapter with PKCE where supported, including:
+Supabase Auth is not automatically an Alexa-compatible OAuth authorization server. Nexora now provides a narrow OAuth 2.0 authorization-code adapter for Alexa, including:
 
 - A registered Alexa OAuth client and exact Amazon redirect URLs.
 - Interactive Nexora login and explicit consent.
@@ -38,7 +38,7 @@ Supabase Auth is not automatically an Alexa-compatible OAuth authorization serve
 - Mapping from token subject to the Nexora user; Amazon identity alone grants no estate access.
 - Audit records for linking, discovery, directives, revocation, and correlation IDs.
 
-This requires persistent OAuth client/grant/token tables and policies. No migration was created because database changes and deployment require explicit approval.
+Persistent grant/token tables are supplied in the additive migration `supabase/migrations/20261118120000_alexa_oauth.sql`; it must be reviewed and applied manually.
 
 ## AWS Lambda requirements
 

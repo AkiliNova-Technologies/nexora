@@ -35,3 +35,17 @@ test("Alexa does not expose or control the estate gate", async () => {
   const result = await handleAlexaDirective(directive("Alexa.PowerController", "TurnOn", "nexora-device-gate-1"), { discover: async () => inventory, command: async () => { throw new Error(); }, isReplay: async () => false });
   assert.equal(result.event.payload.type, "NO_SUCH_ENDPOINT");
 });
+
+test("Alexa ReportState uses the authoritative reported power value", async () => {
+  const result = await handleAlexaDirective(directive("Alexa", "ReportState", "nexora-device-light-1"), { discover: async () => inventory, command: async () => { throw new Error(); }, isReplay: async () => false });
+  assert.equal(result.event.header.name, "StateReport");
+  assert.equal(result.context.properties[0].value, "OFF");
+});
+
+test("Alexa rejects offline devices before command submission", async () => {
+  const offline = { ...inventory, states: { "light-1": { ...inventory.states["light-1"], connectivity: "OFFLINE" } } };
+  let submitted = false;
+  const result = await handleAlexaDirective(directive("Alexa.PowerController", "TurnOff", "nexora-device-light-1"), { discover: async () => offline, command: async () => { submitted = true; throw new Error(); }, isReplay: async () => false });
+  assert.equal(result.event.payload.type, "ENDPOINT_UNREACHABLE");
+  assert.equal(submitted, false);
+});
