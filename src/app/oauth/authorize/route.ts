@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/supabase/server";
-import { getSql } from "@/lib/cloud/db";
-import { ALEXA_SCOPE, AUTHORIZATION_CODE_TTL_SECONDS, opaqueToken, tokenHash } from "@/lib/alexa/oauth";
+import { ALEXA_SCOPE } from "@/lib/alexa/oauth";
+import { issueAlexaAuthorizationCode } from "@/lib/alexa/grants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,11 +36,7 @@ export async function POST(request: Request) {
   if (form.get("decision") !== "allow") { destination.searchParams.set("error", "access_denied"); return Response.redirect(destination, 303); }
   const user = await requireUser();
   if (!user) return new Response("Authentication required", { status: 401 });
-  const code = opaqueToken(), sql = getSql();
-  await sql.begin(async tx => {
-    const grants = await tx`insert into smart_estate.oauth_grant(user_id,client_id,scopes) values(${user.id}::uuid,${values.clientId},array[${ALEXA_SCOPE}]) returning id`;
-    await tx`insert into smart_estate.oauth_authorization_code(code_hash,grant_id,user_id,client_id,redirect_uri,scopes,expires_at) values(${tokenHash(code)},${grants[0].id},${user.id}::uuid,${values.clientId},${values.redirectUri},array[${ALEXA_SCOPE}],now()+${AUTHORIZATION_CODE_TTL_SECONDS}*interval '1 second')`;
-  });
+  const { code } = await issueAlexaAuthorizationCode(user.id, values.redirectUri);
   destination.searchParams.set("code", code);
   return Response.redirect(destination, 303);
 }
