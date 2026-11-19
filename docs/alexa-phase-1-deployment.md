@@ -60,7 +60,7 @@ NEXORA_ALEXA_TIMEOUT_MS=7000
 5. Copy Amazon's exact redirect URLs into the application environment and redeploy configuration.
 6. Enable the skill, consent, discover devices, and test in the Alexa simulator before physical-device testing.
 
-The migration adds only OAuth grants, hashed codes/tokens, and replay IDs. Browser roles receive no grants. Raw credentials are not stored. Grant revocation invalidates access immediately. The service rechecks permissions per request and reports success only after the existing command record reaches `EXECUTED`.
+The migration adds only OAuth grants, hashed codes/tokens, and replay IDs. Browser roles receive no grants. Raw credentials are not stored. Grant revocation invalidates access immediately. The service rechecks permissions per request and reports success only after the existing command record reaches `EXECUTED`. Lambda requests include a millisecond timestamp in `X-Nexora-Timestamp`; the HMAC covers `timestamp + "." + exact request body`, and the backend rejects requests outside a five-minute clock-skew window.
 
 Before applying, take a restorable Supabase backup and verify that none of the five target table names already exists. Although the migration uses `if not exists`, a partially existing table would be skipped and might not have the reviewed constraints. Apply with a direct/session migration connection, never the transaction pooler runtime URL.
 

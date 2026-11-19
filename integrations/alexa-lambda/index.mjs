@@ -10,9 +10,10 @@ const timeoutMs = Number.isFinite(configuredTimeoutMs)
 export async function handler(event) {
   if (!backendUrl || !sharedSecret || !backendUrl.startsWith("https://")) return alexaError(event, "BRIDGE_UNREACHABLE", "The Nexora integration is not configured.");
   const raw = JSON.stringify(event);
-  const signature = createHmac("sha256", sharedSecret).update(raw).digest("hex");
+  const timestamp = Date.now().toString();
+  const signature = createHmac("sha256", sharedSecret).update(`${timestamp}.${raw}`).digest("hex");
   try {
-    const response = await fetch(backendUrl, { method: "POST", headers: { "content-type": "application/json", "x-nexora-signature": signature }, body: raw, signal: AbortSignal.timeout(timeoutMs) });
+    const response = await fetch(backendUrl, { method: "POST", headers: { "content-type": "application/json", "x-nexora-timestamp": timestamp, "x-nexora-signature": signature }, body: raw, signal: AbortSignal.timeout(timeoutMs) });
     if (!response.ok) return alexaError(event, response.status === 401 ? "INVALID_AUTHORIZATION_CREDENTIAL" : "BRIDGE_UNREACHABLE", "Nexora could not process the request.");
     return await response.json();
   } catch { return alexaError(event, "BRIDGE_UNREACHABLE", "Nexora is temporarily unavailable."); }
