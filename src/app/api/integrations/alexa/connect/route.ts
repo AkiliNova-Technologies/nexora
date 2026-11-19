@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSql } from "@/lib/cloud/db";
 import { requireUser } from "@/lib/supabase/server";
 import { amazonAuthorizationUrl, appLinkConfig, encryptCredential, LINK_TRANSACTION_TTL_SECONDS, oauthState, pkceChallenge, pkceVerifier, stateHash, validatedReturnPath } from "@/lib/alexa/app-linking";
+import { hasAlexaEligibleControl } from "@/lib/alexa/grants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,8 +14,7 @@ export async function GET(request: Request) {
   try { config = appLinkConfig(); }
   catch { return NextResponse.redirect(new URL("/settings?integration=alexa&result=unavailable", request.url), 303); }
   const sql = getSql();
-  const eligible = await sql`select exists(select 1 from smart_estate.device d where d.type in ('LIGHT','FAN') and ((d.house_id is not null and smart_estate.can_control_house(${user.id}::uuid,d.house_id)) or (d.estate_id is not null and smart_estate.can_control_estate_device(${user.id}::uuid,d.estate_id,d.type)))) allowed`;
-  if (!eligible[0]?.allowed) return NextResponse.redirect(new URL("/settings?integration=alexa&result=ineligible", request.url), 303);
+  if (!await hasAlexaEligibleControl(user.id)) return NextResponse.redirect(new URL("/settings?integration=alexa&result=ineligible", request.url), 303);
   const existing = await sql`select 1 from smart_estate.alexa_connection where user_id=${user.id}::uuid and skill_id=${config.skillId} and skill_stage=${config.stage} and state in ('connected','verification_pending','unlink_pending') limit 1`;
   if (existing[0]) return NextResponse.redirect(new URL("/settings?integration=alexa&result=already_connected", request.url), 303);
   const state = oauthState(), verifier = pkceVerifier();

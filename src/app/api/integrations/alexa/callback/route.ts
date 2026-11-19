@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSql } from "@/lib/cloud/db";
 import { requireUser } from "@/lib/supabase/server";
 import { AlexaApiError, appLinkConfig, decryptCredential, discoverAlexaEndpoints, enableAlexaSkill, encryptCredential, exchangeAmazonCode, stateHash } from "@/lib/alexa/app-linking";
-import { issueAlexaAuthorizationCode, revokeAlexaGrant, revokeOtherAlexaGrants } from "@/lib/alexa/grants";
+import { hasAlexaEligibleControl, issueAlexaAuthorizationCode, revokeAlexaGrant, revokeOtherAlexaGrants } from "@/lib/alexa/grants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +26,7 @@ export async function GET(request: Request) {
   if (!transaction) return finish(request, "invalid_state");
   const returnPath = String(transaction.return_path);
   if (params.get("error")) return finish(request, "cancelled", returnPath);
+  if (!await hasAlexaEligibleControl(user.id)) return finish(request, "ineligible", returnPath);
   const amazonCode = params.get("code");
   if (!amazonCode) return finish(request, "amazon_error", returnPath);
   let grantId: string | undefined;
