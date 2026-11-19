@@ -1,21 +1,23 @@
 # Railway IoT architecture
 
-Status: prepared, not provisioned.
+Status: implemented locally and deployment-ready; not provisioned, deployed, or physically verified.
 
-Deploy two services: a persistent Mosquitto broker and a persistent Nexora bridge. The bridge reaches Mosquitto over Railway private networking and calls Vercel over HTTPS. ESP32 controllers reach only a TLS-protected public TCP endpoint.
+The Vercel application and Supabase remain authoritative. `nexora-iot-bridge` is a persistent worker: it claims commands over the authenticated gateway API, records each claim in SQLite, publishes QoS 1/non-retained MQTT, receives controller observations, and forwards stable event IDs from its durable queue. `nexora-mqtt` is Mosquitto with a TLS-only listener, controller-specific passwords, generated exact-topic ACLs, and a persistence volume.
 
-Railway supports raw TCP Proxy endpoints and private service networking, but an automatically supplied Railway HTTP domain is not a raw MQTT endpoint. TCP proxy hostname/port and certificate hostname must be verified together. Railway documents custom-domain TCP proxying; use a project-owned DNS name and a certificate whose SAN matches it if the generated TCP hostname cannot satisfy broker certificate renewal and ESP32 verification. [Railway TCP Proxy](https://docs.railway.com/networking/tcp-proxy)
+Controller and device identity comes from `GET /api/iot/v1/bridge/sync`. A bridge may only publish or consume topics enumerated for its gateway. The broker separately enforces the same boundary. The bridge has no database credential and no homeowner session.
 
-Requirements:
+## Service boundaries
 
-- Broker: TLS-only public listener, controller-specific password identities, explicit ACL, persistence volume, health check, no anonymous or public port 1883.
-- Bridge: private broker URL, separate backend MQTT identity, Vercel gateway ID/credential, durable event queue volume, bounded claim loop, retry with stable event IDs, health/readiness endpoint.
-- Certificates: automated issuance/renewal, full chain, hostname validation, CA bundle embedded or securely updated on ESP32, expiry alerting.
-- Restart: broker persistence retains required status/session data; bridge resumes its durable queue and never invents event IDs or replays uncertain actuator commands.
-- Reconciliation: compare registered controller/device inventory, broker ACL generation, queue depth, oldest command age, last heartbeat and revoked credentials.
+- Vercel: gateway APIs; `IOT_GATEWAY_ID` and `IOT_GATEWAY_CREDENTIAL` stay server-only.
+- Supabase: controllers, assignments, commands, events, heartbeats, and security modes.
+- Railway broker: `/mosquitto/data` volume, certificate/key/CA and generated password/ACL files.
+- Railway bridge: `/data/bridge.sqlite`; private broker DNS and public Vercel HTTPS API.
+- ESP32: public raw-TCP proxy using MQTT over TLS; its unique credential and trusted CA only.
 
-Secrets: broker admin/bootstrap secret, per-controller generated credentials, bridge MQTT credential, Vercel gateway credential, database URL only if the bridge design later requires it (it should not), TLS private key, and certificate renewal credentials. None are browser variables.
+Railway HTTP domains are not MQTT endpoints. A raw TCP proxy assigns a hostname and port. Private service DNS is suitable for bridge-to-broker traffic. Mosquitto terminates MQTT TLS end to end.
 
-Begin with roughly 0.5–1 vCPU and 512 MB per service plus small persistent volumes; measure retained messages, connections, queue size and regional latency before resizing. Select a region balancing the estate's MQTT RTT and Vercel/Supabase HTTPS RTT.
+The worker exposes `/healthz` and `/readyz`. SQLite uses WAL and full synchronous writes. A crash while publication is in progress changes the record to `UNCERTAIN` on restart and it is not republished. MQTT PUBACK only means broker acceptance; only controller `EXECUTED` is physical completion.
 
-Broker-side revocation and Railway spending remain pending a separate approved deployment phase.
+Controller reachability comes from server receipt of 15-second heartbeats (degraded at 35 seconds, offline at 50 seconds). Device availability remains separate. Security modes are non-retained, expiring, monotonic, and refreshed after reconnect.
+
+Broker credential activation remains intentionally pending until Railway secret storage and an authorized provisioning operator exist. Pairing remains `credentialProvisioning=PENDING`. Revocation removes the identity and restarts/redeploys Mosquitto to terminate existing sessions. Phase 4 supplies captive-portal credential delivery.

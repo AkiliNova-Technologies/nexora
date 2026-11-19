@@ -1,0 +1,59 @@
+services:
+  fixtures:
+    image: alpine:3.22
+    command: ["/bin/sh", "/fixtures/generate.sh"]
+    volumes:
+      - test-secrets:/out
+      - ./generate-fixtures.sh:/fixtures/generate.sh:ro
+
+  mock-cloud:
+    image: node:24.11.1-alpine
+    depends_on:
+      fixtures: { condition: service_completed_successfully }
+    command: ["node", "/app/mock-cloud.mjs"]
+    volumes:
+      - test-secrets:/run/secrets:ro
+      - ./mock-cloud.mjs:/app/mock-cloud.mjs:ro
+    ports: ["18443:8443"]
+
+  mosquitto:
+    build: ../mosquitto
+    depends_on:
+      fixtures: { condition: service_completed_successfully }
+    volumes:
+      - test-secrets:/run/secrets:ro
+      - broker-data:/mosquitto/data
+    ports: ["18883:8883"]
+
+  bridge:
+    build: ../bridge
+    depends_on: [mock-cloud, mosquitto]
+    environment:
+      NEXORA_API_BASE_URL: https://mock-cloud:8443
+      NEXORA_GATEWAY_ID: gateway-fixture
+      NEXORA_GATEWAY_CREDENTIAL: gateway-credential-fixture-only
+      MQTT_URL: mqtts://mosquitto:8883
+      MQTT_USERNAME: bridge-fixture
+      MQTT_PASSWORD: bridge-password-fixture-only-000000000000
+      MQTT_CA_FILE: /run/secrets/mqtt-ca.pem
+      NODE_EXTRA_CA_CERTS: /run/secrets/mqtt-ca.pem
+      BRIDGE_STORE_PATH: /data/bridge.sqlite
+      BRIDGE_POLL_INTERVAL_MS: "1000"
+      BRIDGE_HEALTH_PORT: "8080"
+    volumes:
+      - test-secrets:/run/secrets:ro
+      - bridge-data:/data
+    ports: ["18080:8080"]
+
+  controller:
+    image: eclipse-mosquitto:2.0.22
+    depends_on: [mosquitto]
+    entrypoint: ["/bin/sh", "/fixture/simulate-controller.sh"]
+    volumes:
+      - test-secrets:/run/secrets:ro
+      - ./simulate-controller.sh:/fixture/simulate-controller.sh:ro
+
+volumes:
+  test-secrets:
+  broker-data:
+  bridge-data:

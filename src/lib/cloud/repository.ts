@@ -98,9 +98,9 @@ export async function claimCommands(gatewayId: string, limit: number) {
   const sql = getSql();
   return sql.begin(async (tx) => {
     await tx`update smart_estate.device_command set status='TIMEOUT',completed_at=now(),error='Command expired before gateway delivery' where gateway_id=${gatewayId} and status in ('PENDING','ACCEPTED') and expires_at<=now()`;
-    const rows = await tx`with selected as (select id from smart_estate.device_command where gateway_id=${gatewayId} and status='PENDING' and expires_at>now() order by requested_at for update skip locked limit ${limit}) update smart_estate.device_command c set status='ACCEPTED',accepted_at=coalesce(c.accepted_at,now()) from selected where c.id=selected.id returning c.id command_id,c.device_id,c.type,c.parameters,c.requested_at,c.expires_at,(select coalesce(d.house_id,d.estate_id) from smart_estate.device d where d.id=c.device_id) scope_id`;
+    const rows = await tx`with selected as (select id from smart_estate.device_command where gateway_id=${gatewayId} and status='PENDING' and expires_at>now() order by requested_at for update skip locked limit ${limit}) update smart_estate.device_command c set status='ACCEPTED',accepted_at=coalesce(c.accepted_at,now()) from selected where c.id=selected.id returning c.id command_id,c.device_id,c.type,c.parameters,c.requested_at,c.expires_at,(select coalesce(d.house_id,d.estate_id) from smart_estate.device d where d.id=c.device_id) scope_id,(select d.controller_id from smart_estate.device d where d.id=c.device_id) controller_id`;
     if (rows.length) await tx`update smart_estate.device_state set command_status='ACCEPTED',version=version+1 where device_id in ${tx(rows.map((row) => row.device_id))}`;
-    return rows.map((row) => ({ commandId: row.command_id, scopeId: row.scope_id, deviceId: row.device_id, type: row.type === "OPEN_GATE" ? "OPEN" : row.type === "CLOSE_GATE" ? "CLOSE" : row.type, parameters: row.parameters, issuedAt: row.requested_at, expiresAt: row.expires_at }));
+    return rows.map((row) => ({ commandId: row.command_id, controllerId: row.controller_id, scopeId: row.scope_id, deviceId: row.device_id, type: row.type === "OPEN_GATE" ? "OPEN" : row.type === "CLOSE_GATE" ? "CLOSE" : row.type, parameters: row.parameters, issuedAt: row.requested_at, expiresAt: row.expires_at }));
   });
 }
 

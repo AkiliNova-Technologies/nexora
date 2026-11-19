@@ -1,0 +1,13 @@
+{
+  "bridge": { "username": "bridge-fixture" },
+  "controllers": [
+    {
+      "controllerId": "controller-fixture-01",
+      "username": "controller-fixture-01",
+      "devices": [
+        { "scopeId": "house-fixture-01", "deviceId": "light-fixture-01" },
+        { "scopeId": "house-fixture-01", "deviceId": "fan-fixture-01" }
+      ]
+    }
+  ]
+}
