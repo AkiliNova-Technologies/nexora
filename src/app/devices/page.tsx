@@ -74,6 +74,9 @@ const deviceIconMap = {
   SPEAKER: Cpu,
   TEMPERATURE_SENSOR: Thermometer,
   HUMIDITY_SENSOR: Thermometer,
+  ULTRASONIC_SENSOR: ShieldCheck,
+  RGB_LIGHT: Lightbulb,
+  SIREN: ShieldCheck,
   GATE: DoorOpen,
 } satisfies Record<DeviceType, React.ElementType>;
 

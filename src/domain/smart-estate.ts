@@ -33,6 +33,9 @@ export type DeviceType =
   | "SPEAKER"
   | "TEMPERATURE_SENSOR"
   | "HUMIDITY_SENSOR"
+  | "ULTRASONIC_SENSOR"
+  | "RGB_LIGHT"
+  | "SIREN"
   | "GATE";
 
 export type DeviceCapability =
@@ -44,6 +47,8 @@ export type DeviceCapability =
   | { type: "POSITION" }
   | { type: "CAMERA_STREAM" }
   | { type: "CAMERA_RECORDING" }
+  | { type: "RGB_COLOR" }
+  | { type: "SIREN_CONTROL"; maxDurationSeconds: number }
   | { type: "GATE_CONTROL" };
 
 export interface Device {
@@ -59,7 +64,7 @@ export interface Device {
   allowedOperations?: Array<"VIEW" | "READ_STATE" | "COMMAND">;
 }
 
-export type DeviceConnectivity = "ONLINE" | "OFFLINE";
+export type DeviceConnectivity = "ONLINE" | "OFFLINE" | "UNAVAILABLE" | "DEGRADED" | "UNKNOWN";
 export type DeviceCommandStatus =
   | "IDLE"
   | "PENDING"
@@ -111,6 +116,9 @@ export type DeviceCommandType =
   | "STOP"
   | "START_RECORDING"
   | "STOP_RECORDING"
+  | "SET_RGB"
+  | "ACTIVATE_SIREN"
+  | "STOP_SIREN"
   | "OPEN_GATE"
   | "CLOSE_GATE"
   | "GET_GATE_STATUS";

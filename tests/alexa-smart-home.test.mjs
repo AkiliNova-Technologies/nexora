@@ -14,6 +14,15 @@ test("Alexa discovery exposes only supported authorized household controls", () 
   assert.equal(endpoints[0].displayCategories[0], "LIGHT");
 });
 
+test("Alexa excludes sirens, RGB perimeter lights, sensors and gates",()=>{
+  const excluded=[
+    {id:"s",estateId:"e",name:"Siren",type:"SIREN",capabilities:[{type:"SIREN_CONTROL",maxDurationSeconds:30}],allowedOperations:["COMMAND"]},
+    {id:"r",estateId:"e",name:"Strip",type:"RGB_LIGHT",capabilities:[{type:"POWER"}],allowedOperations:["COMMAND"]},
+    {id:"p",estateId:"e",name:"PIR",type:"MOTION_SENSOR",capabilities:[],allowedOperations:["VIEW"]},gate,
+  ];
+  assert.equal(discoveryEndpoints({...inventory,devices:[light,...excluded]}).length,1);
+});
+
 test("Alexa rejects unlinked directives", async () => {
   const result = await handleAlexaDirective({ directive: { header: { namespace: "Alexa.Discovery", name: "Discover", payloadVersion: "3", messageId: "one" }, payload: {} } }, { discover: async () => inventory, command: async () => { throw new Error(); }, isReplay: async () => false });
   assert.equal(result.event.payload.type, "INVALID_AUTHORIZATION_CREDENTIAL");

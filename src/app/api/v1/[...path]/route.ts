@@ -4,6 +4,7 @@ import { CommandSubmissionError, dashboard, deviceState, devices, houses, profil
 import { getSql } from "@/lib/cloud/db";
 import { validateMutationRequest } from "@/lib/cloud/security";
 import { diagnosticRoute, elapsedMs, logServerTiming } from "@/lib/cloud/timing";
+import { associateHouse, ControllerAuthorizationError, ControllerConflictError, controllerDetails, createPendingController, initiatePairing, listControllers, revokeController } from "@/lib/controllers/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,6 +36,12 @@ export async function GET(request: NextRequest, context: Context) {
       const rows = await sql`select e.id,e.name,e.timezone from smart_estate.estate e join smart_estate.estate_member m on m.estate_id=e.id where m.user_id=${user.id}::uuid and m.active order by e.name`;
       return NextResponse.json(rows);
     }
+    if (path.length === 1 && path[0] === "controllers") {
+      const estateId = request.nextUrl.searchParams.get("estateId");
+      if (!estateId) return jsonError(400,"ESTATE_REQUIRED","An estate ID is required");
+      return NextResponse.json(await listControllers(user.id,estateId));
+    }
+    if (path.length === 2 && path[0] === "controllers") return NextResponse.json(await controllerDetails(user.id,path[1]));
     if (path.length === 3 && path[0] === "houses" && path[2] === "rooms") return NextResponse.json(await rooms(user.id, path[1]));
     if (path.length === 3 && path[0] === "houses" && path[2] === "devices") return NextResponse.json(await devices(user.id, path[1]));
     if (path.length === 3 && path[0] === "houses" && path[2] === "dashboard") { const value = await dashboard(user.id, path[1]); return value ? NextResponse.json(value) : jsonError(404, "HOUSE_NOT_FOUND", "House was not found"); }
@@ -73,6 +80,8 @@ export async function GET(request: NextRequest, context: Context) {
     }
     return jsonError(404, "NOT_FOUND", "API route was not found");
   } catch (error) {
+    if (error instanceof ControllerAuthorizationError) return jsonError(404,"CONTROLLER_NOT_FOUND",error.message);
+    if (error instanceof ControllerConflictError) return jsonError(409,"CONTROLLER_CONFLICT",error.message);
     outcome = "database_unavailable";
     console.error("Cloud API read failed", { route, errorCode: error && typeof error === "object" && "code" in error ? String(error.code) : "UNKNOWN", authMs, totalMs: elapsedMs(startedAt) });
     return jsonError(503, "DATABASE_UNAVAILABLE", "Cloud data is unavailable");
@@ -110,6 +119,12 @@ async function mutation(request: NextRequest, context: Context) {
     if (path.length === 3 && path[0] === "devices" && path[2] === "commands") {
       const command = await submitCommand(user.id, path[1], body); return command ? NextResponse.json(command, { status: 202 }) : jsonError(404, "DEVICE_NOT_FOUND", "Device was not found");
     }
+    if (request.method === "POST" && path.length === 1 && path[0] === "controllers") {
+      return NextResponse.json(await createPendingController(user.id,{ id:String(body.id??""),estateId:String(body.estateId??""),gatewayId:String(body.gatewayId??""),name:String(body.name??""),hardwareIdentity:String(body.hardwareIdentity??""),proofOfPossessionHash:String(body.proofOfPossessionHash??"") }),{status:201});
+    }
+    if (request.method === "POST" && path.length === 3 && path[0] === "controllers" && path[2] === "pairing-challenges") return NextResponse.json(await initiatePairing(user.id,path[1]),{status:201});
+    if (request.method === "POST" && path.length === 3 && path[0] === "controllers" && path[2] === "houses") return NextResponse.json(await associateHouse(user.id,path[1],String(body.houseId??"")));
+    if (request.method === "POST" && path.length === 3 && path[0] === "controllers" && path[2] === "revoke") return NextResponse.json(await revokeController(user.id,path[1]));
     if (request.method === "PUT" && path.length === 3 && path[0] === "houses" && path[2] === "security-mode") {
       const mode = typeof body.mode === "string" && ["DISARMED","ARMED_HOME","ARMED_AWAY"].includes(body.mode) ? body.mode : null;
       const expectedVersion = Number(body.expectedVersion);
@@ -126,6 +141,8 @@ async function mutation(request: NextRequest, context: Context) {
     return jsonError(404, "NOT_FOUND", "API route was not found");
   } catch (error) {
     if (error instanceof CommandSubmissionError) return jsonError(error.code === "DEVICE_OFFLINE" ? 409 : 400, error.code, error.message);
+    if (error instanceof ControllerAuthorizationError) return jsonError(404,"CONTROLLER_NOT_FOUND",error.message);
+    if (error instanceof ControllerConflictError) return jsonError(409,"CONTROLLER_CONFLICT",error.message);
     console.error("Cloud API mutation failed", { path: path.join("/"), message: error instanceof Error ? error.message : "unknown" }); return jsonError(503, "DATABASE_UNAVAILABLE", "Cloud operation is unavailable");
   }
 }

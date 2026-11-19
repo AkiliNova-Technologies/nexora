@@ -35,7 +35,7 @@ export interface UserResponse {
   id: string;
   name: string;
   email: string;
-  role: "USER";
+  role: "USER" | "ESTATE_ADMIN";
 }
 export interface RegisterResponse extends UserResponse {
   requiresEmailConfirmation?: boolean;
@@ -43,7 +43,7 @@ export interface RegisterResponse extends UserResponse {
 
 export interface DeviceCommandRequest {
   command: DeviceCommandType;
-  parameters?: { value: number };
+  parameters?: { value?: number; durationSeconds?: number; r?: number; g?: number; b?: number };
   clientRequestId: string;
 }
 export interface SecurityModeChangeRequest {
@@ -68,6 +68,7 @@ export interface DashboardResponse {
   energyTodayKwh: number;
 }
 export interface SecurityEventPage { items: SecurityEvent[]; page: number; pageSize: number; total: number; totalPages: number; }
+export interface ControllerSummary {id:string;estateId:string;gatewayId:string;name:string;hardwareIdentity:string;registrationState:"PENDING"|"PAIRED"|"REVOKED";pairingState:"UNPAIRED"|"CHALLENGE_ISSUED"|"PAIRED"|"REVOKED";firmwareVersion?:string|null;credentialVersion:number;revokedAt?:string|null;wifiSsid?:string|null;wifiRssi?:number|null;networkState:DeviceState["connectivity"];mqttState:DeviceState["connectivity"];availability:DeviceState["connectivity"];lastHeartbeatAt?:string|null;lastSeenAt?:string|null;}
 
 export interface DevelopmentOnboardingResponse {
   houseId: string;

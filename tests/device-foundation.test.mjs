@@ -42,6 +42,17 @@ test("fan and thermostat expose distinct validated controls", () => {
   assert.equal(supportsCommand(thermostat, "SET_FAN_SPEED"), false);
 });
 
+test("gate canonical commands use gate capability and siren duration is bounded", () => {
+  const gate={id:"g",estateId:"e",name:"Gate",type:"GATE",capabilities:[{type:"GATE_CONTROL"}],allowedOperations:["COMMAND"]};
+  assert.equal(validateCommand(gate,"OPEN"),null);
+  assert.equal(validateCommand(gate,"CLOSE"),null);
+  assert.equal(validateCommand(gate,"STOP"),null);
+  assert.equal(validateCommand(gate,"GET_GATE_STATUS"),null);
+  const siren={id:"s",estateId:"e",name:"Siren",type:"SIREN",capabilities:[{type:"SIREN_CONTROL",maxDurationSeconds:30}],allowedOperations:["COMMAND"]};
+  assert.equal(validateCommand(siren,"ACTIVATE_SIREN",30),null);
+  assert.match(validateCommand(siren,"ACTIVATE_SIREN",31),/between 1 and 30/);
+});
+
 test("one store synchronizes state and reports the simulated lifecycle", async () => {
   const store = new DeviceStore(mockDevices, mockDeviceStates, new MockDeviceSimulator({ status: "EXECUTED" }, 1));
   const statuses = [];

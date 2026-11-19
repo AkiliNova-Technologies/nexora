@@ -18,6 +18,9 @@ const commandCapability: Partial<Record<DeviceCommandType, DeviceCapability["typ
   STOP: "POSITION",
   START_RECORDING: "CAMERA_RECORDING",
   STOP_RECORDING: "CAMERA_RECORDING",
+  SET_RGB: "RGB_COLOR",
+  ACTIVATE_SIREN: "SIREN_CONTROL",
+  STOP_SIREN: "SIREN_CONTROL",
   OPEN_GATE: "GATE_CONTROL",
   CLOSE_GATE: "GATE_CONTROL",
   GET_GATE_STATUS: "GATE_CONTROL",
@@ -35,7 +38,7 @@ export function getCapability<T extends DeviceCapability["type"]>(
 
 export function supportsCommand(device: Device, command: DeviceCommandType) {
   if (device.allowedOperations && !device.allowedOperations.includes("COMMAND")) return false;
-  const required = command === "STOP" && device.type === "GATE" ? "GATE_CONTROL" : commandCapability[command];
+  const required = device.type === "GATE" && ["OPEN","CLOSE","STOP","GET_GATE_STATUS","OPEN_GATE","CLOSE_GATE"].includes(command) ? "GATE_CONTROL" : commandCapability[command];
   return required !== undefined && getCapability(device, required) !== undefined;
 }
 
@@ -44,7 +47,7 @@ export function validateCommand(
   command: DeviceCommandType,
   value?: number,
 ): string | null {
-  const capabilityType = command === "STOP" && device.type === "GATE" ? "GATE_CONTROL" : commandCapability[command];
+  const capabilityType = device.type === "GATE" && ["OPEN","CLOSE","STOP","GET_GATE_STATUS","OPEN_GATE","CLOSE_GATE"].includes(command) ? "GATE_CONTROL" : commandCapability[command];
   if (!capabilityType || !supportsCommand(device, command)) {
     return `${device.name} does not support ${command}`;
   }
@@ -54,6 +57,11 @@ export function validateCommand(
     if (value === undefined || !Number.isFinite(value)) return "A numeric value is required";
     if (value < capability.min || value > capability.max) {
       return `Value must be between ${capability.min} and ${capability.max}`;
+    }
+  }
+  if (capability?.type === "SIREN_CONTROL" && command === "ACTIVATE_SIREN") {
+    if (value === undefined || !Number.isInteger(value) || value < 1 || value > capability.maxDurationSeconds) {
+      return `Duration must be between 1 and ${capability.maxDurationSeconds} seconds`;
     }
   }
 
@@ -83,6 +91,9 @@ export function applyCommand(
     case "CLOSE": return { ...reported, open: false, positionPercent: 0 };
     case "START_RECORDING": return { ...reported, recording: true };
     case "STOP_RECORDING": return { ...reported, recording: false };
+    case "SET_RGB": return reported;
+    case "ACTIVATE_SIREN": return { ...reported, on: true };
+    case "STOP_SIREN": return { ...reported, on: false };
     case "STOP": return reported;
     case "OPEN_GATE": return { ...reported, lastRequestedOperation: "OPEN_GATE", physicalPositionVerification: "UNVERIFIED" };
     case "CLOSE_GATE": return { ...reported, lastRequestedOperation: "CLOSE_GATE", physicalPositionVerification: "UNVERIFIED" };

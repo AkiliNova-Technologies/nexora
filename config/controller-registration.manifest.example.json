@@ -1,0 +1,18 @@
+{
+  "controller": { "id": "REQUIRED", "estateId": "estate-aura", "gatewayId": "REQUIRED", "hardwareIdentity": "REQUIRED" },
+  "houseMappings": { "house1": null, "house2": null },
+  "devices": [
+    { "logicalName": "house1.light1", "scope": "house1", "type": "LIGHT", "capabilities": [{ "type": "POWER" }] },
+    { "logicalName": "house1.light2", "scope": "house1", "type": "LIGHT", "capabilities": [{ "type": "POWER" }] },
+    { "logicalName": "house1.fan", "scope": "house1", "type": "FAN", "capabilities": [{ "type": "POWER" }] },
+    { "logicalName": "house1.ultrasonic", "scope": "house1", "type": "ULTRASONIC_SENSOR", "capabilities": [] },
+    { "logicalName": "house2.light1", "scope": "house2", "type": "LIGHT", "capabilities": [{ "type": "POWER" }] },
+    { "logicalName": "house2.light2", "scope": "house2", "type": "LIGHT", "capabilities": [{ "type": "POWER" }] },
+    { "logicalName": "house2.ultrasonic", "scope": "house2", "type": "ULTRASONIC_SENSOR", "capabilities": [] },
+    { "logicalName": "perimeter.pir1", "scope": "estate", "type": "MOTION_SENSOR", "capabilities": [] },
+    { "logicalName": "perimeter.pir2", "scope": "estate", "type": "MOTION_SENSOR", "capabilities": [] },
+    { "logicalName": "perimeter.strip", "scope": "estate", "type": "RGB_LIGHT", "capabilities": [{ "type": "POWER" }, { "type": "BRIGHTNESS", "min": 0, "max": 100 }, { "type": "RGB_COLOR" }] },
+    { "logicalName": "estate.siren", "scope": "estate", "type": "SIREN", "capabilities": [{ "type": "SIREN_CONTROL", "maxDurationSeconds": 30 }] },
+    { "logicalName": "estate.gate", "scope": "estate", "type": "GATE", "capabilities": [{ "type": "GATE_CONTROL" }] }
+  ]
+}

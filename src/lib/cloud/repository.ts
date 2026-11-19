@@ -4,7 +4,7 @@ import type { Device } from "../../domain/smart-estate.ts";
 import { validateCommand } from "../device-capabilities.ts";
 
 type User = { id: string; email: string };
-const commandTypes = new Set(["TURN_ON", "TURN_OFF", "SET_BRIGHTNESS", "SET_FAN_SPEED", "SET_TARGET_TEMPERATURE", "LOCK", "UNLOCK", "OPEN", "CLOSE", "STOP", "START_RECORDING", "STOP_RECORDING", "OPEN_GATE", "CLOSE_GATE", "GET_GATE_STATUS"]);
+const commandTypes = new Set(["TURN_ON", "TURN_OFF", "SET_BRIGHTNESS", "SET_FAN_SPEED", "SET_TARGET_TEMPERATURE", "LOCK", "UNLOCK", "OPEN", "CLOSE", "STOP", "START_RECORDING", "STOP_RECORDING", "SET_RGB", "ACTIVATE_SIREN", "STOP_SIREN", "OPEN_GATE", "CLOSE_GATE", "GET_GATE_STATUS"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class CommandSubmissionError extends Error {
@@ -15,7 +15,9 @@ export async function profile(user: User) {
   const sql = getSql();
   const rows = await sql`select id, display_name, email from smart_estate.profile where id = ${user.id}::uuid`;
   const row = rows[0];
-  return row ? { id: row.id, name: row.display_name, email: row.email, role: "USER" } : { id: user.id, name: user.email.split("@")[0], email: user.email, role: "USER" };
+  const admin = await sql`select exists(select 1 from smart_estate.estate_admin where user_id=${user.id}::uuid and active) value`;
+  const role = admin[0]?.value ? "ESTATE_ADMIN" : "USER";
+  return row ? { id: row.id, name: row.display_name, email: row.email, role } : { id: user.id, name: user.email.split("@")[0], email: user.email, role };
 }
 
 export async function houses(userId: string) {
@@ -65,9 +67,18 @@ export async function submitCommand(userId: string, deviceId: string, body: Reco
     if (!allowed[0]) return [];
     const record = allowed[0];
     const device = { id: record.id, houseId: record.house_id, estateId: record.estate_id, roomId: record.room_id, name: record.name, type: record.type, capabilities: record.capabilities, executionMode: record.execution_mode, allowedOperations: ["VIEW", "READ_STATE", "COMMAND"] } as Device;
-    const value = parameters && "value" in parameters ? Number((parameters as { value?: unknown }).value) : undefined;
+    const value = parameters && "value" in parameters ? Number((parameters as { value?: unknown }).value) : type==="ACTIVATE_SIREN"?Number((parameters as {durationSeconds?:unknown}|null)?.durationSeconds):undefined;
     const validationError = validateCommand(device, type as Parameters<typeof validateCommand>[1], value);
     if (validationError) throw new CommandSubmissionError("INVALID_COMMAND", validationError);
+    if (type === "SET_RGB") {
+      const rgb=parameters as {r?:unknown;g?:unknown;b?:unknown}|null;
+      if(!rgb||![rgb.r,rgb.g,rgb.b].every(channel=>Number.isInteger(channel)&&Number(channel)>=0&&Number(channel)<=255)) throw new CommandSubmissionError("INVALID_COMMAND","RGB channels must be integers from 0 to 255");
+    }
+    if(type==="ACTIVATE_SIREN"){
+      const duration=Number((parameters as {durationSeconds?:unknown}|null)?.durationSeconds);
+      const capability=device.capabilities.find(item=>item.type==="SIREN_CONTROL");
+      if(!capability||capability.type!=="SIREN_CONTROL"||!Number.isInteger(duration)||duration<1||duration>capability.maxDurationSeconds) throw new CommandSubmissionError("INVALID_COMMAND","A safe siren duration is required");
+    }
     if (record.connectivity !== "ONLINE") throw new CommandSubmissionError("DEVICE_OFFLINE", `${device.name} is offline`);
     const commandId = randomUUID();
     const inserted = await tx`insert into smart_estate.device_command(id,device_id,gateway_id,client_request_id,type,parameters,status,requested_by,requested_at,expires_at) values(${commandId}::uuid,${deviceId},${allowed[0].gateway_id},${requestId},${type},${tx.json(parameters)},'PENDING',${userId}::uuid,now(),now()+interval '30 seconds') on conflict(device_id,client_request_id) do update set client_request_id=excluded.client_request_id returning id,device_id,type,parameters,status,requested_at,completed_at,error,requested_by`;
@@ -89,7 +100,7 @@ export async function claimCommands(gatewayId: string, limit: number) {
     await tx`update smart_estate.device_command set status='TIMEOUT',completed_at=now(),error='Command expired before gateway delivery' where gateway_id=${gatewayId} and status in ('PENDING','ACCEPTED') and expires_at<=now()`;
     const rows = await tx`with selected as (select id from smart_estate.device_command where gateway_id=${gatewayId} and status='PENDING' and expires_at>now() order by requested_at for update skip locked limit ${limit}) update smart_estate.device_command c set status='ACCEPTED',accepted_at=coalesce(c.accepted_at,now()) from selected where c.id=selected.id returning c.id command_id,c.device_id,c.type,c.parameters,c.requested_at,c.expires_at,(select coalesce(d.house_id,d.estate_id) from smart_estate.device d where d.id=c.device_id) scope_id`;
     if (rows.length) await tx`update smart_estate.device_state set command_status='ACCEPTED',version=version+1 where device_id in ${tx(rows.map((row) => row.device_id))}`;
-    return rows.map((row) => ({ commandId: row.command_id, scopeId: row.scope_id, deviceId: row.device_id, type: row.type, parameters: row.parameters, issuedAt: row.requested_at, expiresAt: row.expires_at }));
+    return rows.map((row) => ({ commandId: row.command_id, scopeId: row.scope_id, deviceId: row.device_id, type: row.type === "OPEN_GATE" ? "OPEN" : row.type === "CLOSE_GATE" ? "CLOSE" : row.type, parameters: row.parameters, issuedAt: row.requested_at, expiresAt: row.expires_at }));
   });
 }
 
@@ -105,17 +116,19 @@ export async function ingestEvents(gatewayId: string, events: BridgeEvent[]) {
       if (!dedupe[0]) return false;
       if (event.kind === "ack") {
         const commandId = typeof event.body.commandId === "string" ? event.body.commandId : "";
-        const status = typeof event.body.status === "string" && ["EXECUTED", "FAILED"].includes(event.body.status) ? event.body.status : "FAILED";
-        await tx`update smart_estate.device_command set status=${status},completed_at=now(),error=${typeof event.body.error === "string" ? event.body.error : null} where id=${commandId}::uuid and device_id=${event.deviceId} and gateway_id=${gatewayId} and status='ACCEPTED'`;
+        const status = typeof event.body.status === "string" && ["ACCEPTED","EXECUTED", "FAILED"].includes(event.body.status) ? event.body.status : "FAILED";
+        await tx`update smart_estate.device_command set status=${status},completed_at=case when ${status} in ('EXECUTED','FAILED') then now() else completed_at end,error=${typeof event.body.error === "string" ? event.body.error : null} where id=${commandId}::uuid and device_id=${event.deviceId} and gateway_id=${gatewayId} and status='ACCEPTED'`;
         if (status === "EXECUTED" && event.body.reported && typeof event.body.reported === "object") await tx`update smart_estate.device_state set reported=${tx.json(event.body.reported)},desired=null,command_status='EXECUTED',last_reported_at=now(),version=version+1 where device_id=${event.deviceId}`;
         else if (status === "FAILED") await tx`update smart_estate.device_state set desired=null,command_status='FAILED',version=version+1 where device_id=${event.deviceId}`;
       } else if (event.kind === "state" && event.body.reported && typeof event.body.reported === "object") {
         await tx`update smart_estate.device_state set reported=${tx.json(event.body.reported)},last_reported_at=now(),connectivity='ONLINE',version=version+1 where device_id=${event.deviceId}`;
       } else if (event.kind === "status") {
-        await tx`update smart_estate.device_state set connectivity=${event.body.status === "ONLINE" ? "ONLINE" : "OFFLINE"},last_seen_at=now(),version=version+1 where device_id=${event.deviceId}`;
+        const connectivity = typeof event.body.status === "string" && ["ONLINE","OFFLINE","UNAVAILABLE","DEGRADED","UNKNOWN"].includes(event.body.status) ? event.body.status : "UNKNOWN";
+        await tx`update smart_estate.device_state set connectivity=${connectivity},last_seen_at=now(),version=version+1 where device_id=${event.deviceId}`;
       } else if (event.kind === "event") {
-        const device = await tx`select house_id from smart_estate.device where id=${event.deviceId} and gateway_id=${gatewayId}`;
+        const device = await tx`select house_id,estate_id from smart_estate.device where id=${event.deviceId} and gateway_id=${gatewayId}`;
         if (device[0]?.house_id && typeof event.body.type === "string") await tx`insert into smart_estate.security_event(id,house_id,device_id,type,severity,occurred_at,metadata) values(${uuidPattern.test(event.eventId) ? event.eventId : randomUUID()}::uuid,${device[0].house_id},${event.deviceId},${event.body.type},${event.body.severity === "CRITICAL" || event.body.severity === "WARNING" ? event.body.severity : "INFO"},${typeof event.body.occurredAt === "string" ? event.body.occurredAt : event.receivedAt}::timestamptz,${tx.json(event.body)}) on conflict(id) do nothing`;
+        else if(device[0]?.estate_id&&typeof event.body.type==="string") await tx`insert into smart_estate.estate_security_event(id,estate_id,device_id,type,severity,occurred_at,metadata) values(${uuidPattern.test(event.eventId)?event.eventId:randomUUID()}::uuid,${device[0].estate_id},${event.deviceId},${event.body.type},${event.body.severity === "CRITICAL" || event.body.severity === "WARNING" ? event.body.severity : "INFO"},${typeof event.body.occurredAt === "string" ? event.body.occurredAt : event.receivedAt}::timestamptz,${tx.json(event.body)}) on conflict(id) do nothing`;
       }
       return true;
     });

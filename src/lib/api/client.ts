@@ -9,6 +9,7 @@ import type {
   SecurityModeChangeRequest,
   SecuritySensorPolicyUpdateRequest,
   UserResponse,
+  ControllerSummary,
   SecurityEventPage,
 } from "./contracts.ts";
 import type { Device, DeviceCommand, DeviceState, Estate, GateResource, House, HouseSecurityMode, Room, SecurityEvent, SecuritySensorPolicy } from "../../domain/smart-estate.ts";
@@ -55,6 +56,7 @@ export class SmartEstateApiClient {
   me = () => this.request<UserResponse>("/me");
   houses = () => this.request<House[]>("/houses");
   estates = () => this.request<Estate[]>("/estates");
+  controllers=(estateId:string)=>this.request<ControllerSummary[]>(`/controllers?estateId=${encodeURIComponent(estateId)}`);
   gate = (estateId: string) => this.request<GateResource>(`/estates/${estateId}/gate`);
   rooms = (houseId: string) => this.request<Room[]>(`/houses/${houseId}/rooms`);
   devices = (houseId: string) => this.request<Device[]>(`/houses/${houseId}/devices`);
