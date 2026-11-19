@@ -30,6 +30,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     mqttUsername: required(env, "MQTT_USERNAME"),
     mqttPassword: required(env, "MQTT_PASSWORD"),
     mqttCa,
+    mqttTlsServername: env.MQTT_TLS_SERVERNAME?.trim() || mqttUrl.hostname,
     storePath: env.BRIDGE_STORE_PATH?.trim() || "/data/bridge.sqlite",
     pollIntervalMs: integer(env, "BRIDGE_POLL_INTERVAL_MS", 3000, 500, 60000),
     maxBackoffMs: integer(env, "BRIDGE_MAX_BACKOFF_MS", 30000, 3000, 300000),

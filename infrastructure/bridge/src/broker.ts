@@ -1,7 +1,9 @@
-import { connect, type IClientOptions, type MqttClient } from "mqtt";
+import { connect as connectTls } from "node:tls";
+import { MqttClient, type AckHandler, type IClientOptions } from "mqtt";
 import type { Config } from "./config.js";
 
-export function connectBroker(config: Config): MqttClient {
+export function connectBroker(config: Config, customHandleAcks?: AckHandler): MqttClient {
+  const broker = new URL(config.mqttUrl);
   const options: IClientOptions = {
     username: config.mqttUsername,
     password: config.mqttPassword,
@@ -12,9 +14,17 @@ export function connectBroker(config: Config): MqttClient {
     reconnectPeriod: 3000,
     connectTimeout: 15000,
     keepalive: 30,
+    protocolVersion: 5,
     resubscribe: true,
+    customHandleAcks,
   };
-  return connect(config.mqttUrl, options);
+  return new MqttClient(() => connectTls({
+    host: broker.hostname,
+    port: Number(broker.port || 8883),
+    servername: config.mqttTlsServername,
+    ca: config.mqttCa,
+    rejectUnauthorized: true,
+  }), options);
 }
 
 export function publishQos1(client: MqttClient, topic: string, payload: string) {

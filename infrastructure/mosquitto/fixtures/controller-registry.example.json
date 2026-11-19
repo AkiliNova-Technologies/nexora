@@ -8,6 +8,13 @@
         { "scopeId": "house-fixture-01", "deviceId": "light-fixture-01" },
         { "scopeId": "house-fixture-01", "deviceId": "fan-fixture-01" }
       ]
+    },
+    {
+      "controllerId": "controller-fixture-02",
+      "username": "controller-fixture-02",
+      "devices": [
+        { "scopeId": "house-fixture-02", "deviceId": "light-fixture-02" }
+      ]
     }
   ]
 }

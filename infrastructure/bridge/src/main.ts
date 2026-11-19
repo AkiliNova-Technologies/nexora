@@ -8,7 +8,10 @@ import { log } from "./log.js";
 
 const config = loadConfig();
 const store = new BridgeStore(config.storePath, config.maxQueuedEvents);
-const bridge = new Bridge(new CloudClient(config.apiBaseUrl, config.gatewayId, config.gatewayCredential), connectBroker(config), store, config.pollIntervalMs, config.maxBackoffMs, config.maxPayloadBytes, config.eventRetentionDays);
+let acknowledge: Parameters<typeof connectBroker>[1] = (_topic, _payload, _packet, done) => done(new Error("bridge_not_ready"), 128);
+const mqtt = connectBroker(config, (topic, payload, packet, done) => acknowledge?.(topic, payload, packet, done));
+const bridge = new Bridge(new CloudClient(config.apiBaseUrl, config.gatewayId, config.gatewayCredential), mqtt, store, config.pollIntervalMs, config.maxBackoffMs, config.maxPayloadBytes, config.eventRetentionDays);
+acknowledge = (topic, payload, _packet, done) => bridge.persistBeforeMqttAck(topic, payload, done);
 const server = createServer((request, response) => {
   const health = bridge.health();
   const readiness = request.url === "/readyz";

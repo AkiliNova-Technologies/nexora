@@ -36,3 +36,12 @@ test("interrupted publication becomes uncertain and is not claimable", () => {
   store.close();
   rmSync(directory, { recursive: true });
 });
+
+test("event queue fails closed at its configured capacity", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nexora-bridge-"));
+  const store = new BridgeStore(join(directory, "queue.sqlite"), 1);
+  store.enqueueEvent({ eventId: "event-1", scopeId: "house-1", deviceId: "light-1", kind: "state", receivedAt: new Date().toISOString(), body: { eventId: "event-1" } });
+  assert.throws(() => store.enqueueEvent({ eventId: "event-2", scopeId: "house-1", deviceId: "light-1", kind: "state", receivedAt: new Date().toISOString(), body: { eventId: "event-2" } }), /event_queue_full/);
+  store.close();
+  rmSync(directory, { recursive: true });
+});

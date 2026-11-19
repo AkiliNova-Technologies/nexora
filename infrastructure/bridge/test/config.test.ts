@@ -12,5 +12,6 @@ test("requires TLS for public MQTT", () => {
   const base = { NEXORA_API_BASE_URL: "https://example.com", NEXORA_GATEWAY_ID: "gateway", NEXORA_GATEWAY_CREDENTIAL: "secret", MQTT_USERNAME: "bridge", MQTT_PASSWORD: "secret", MQTT_CA_FILE: ca };
   assert.throws(() => loadConfig({ ...base, MQTT_URL: "mqtt://broker:1883" }), /mqtts/);
   assert.equal(loadConfig({ ...base, MQTT_URL: "mqtts://broker:8883" }).pollIntervalMs, 3000);
+  assert.equal(loadConfig({ ...base, MQTT_URL: "mqtts://broker.railway.internal:8883", MQTT_TLS_SERVERNAME: "mqtt.example.com" }).mqttTlsServername, "mqtt.example.com");
   rmSync(directory, { recursive: true });
 });

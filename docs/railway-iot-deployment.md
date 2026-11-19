@@ -26,6 +26,6 @@ Owner actions: own the MQTT DNS name, choose a region, create services/volumes a
 ## Variable ownership
 
 - Vercel only: `IOT_GATEWAY_ID`, `IOT_GATEWAY_CREDENTIAL`, existing `DATABASE_URL` and existing Supabase/Alexa variables. No MQTT private key belongs in browser-prefixed variables.
-- Bridge only: `NEXORA_API_BASE_URL`, `NEXORA_GATEWAY_ID`, `NEXORA_GATEWAY_CREDENTIAL`, `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `MQTT_CA_FILE`, `BRIDGE_STORE_PATH`, `BRIDGE_POLL_INTERVAL_MS`, `BRIDGE_MAX_BACKOFF_MS`, `BRIDGE_HEALTH_PORT`, `PORT`, `BRIDGE_MAX_PAYLOAD_BYTES`, `BRIDGE_MAX_QUEUED_EVENTS`, `BRIDGE_EVENT_RETENTION_DAYS`, and `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`.
+- Bridge only: `NEXORA_API_BASE_URL`, `NEXORA_GATEWAY_ID`, `NEXORA_GATEWAY_CREDENTIAL`, `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `MQTT_CA_FILE`, `MQTT_TLS_SERVERNAME`, `BRIDGE_STORE_PATH`, `BRIDGE_POLL_INTERVAL_MS`, `BRIDGE_MAX_BACKOFF_MS`, `BRIDGE_HEALTH_PORT`, `PORT`, `BRIDGE_MAX_PAYLOAD_BYTES`, `BRIDGE_MAX_QUEUED_EVENTS`, `BRIDGE_EVENT_RETENTION_DAYS`, and `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`.
 - Broker secret files: `mqtt-cert.pem`, `mqtt-key.pem`, `mqtt-ca.pem`, `controller-registry.json`, and `mqtt-credentials.json`; volume `/mosquitto/data`.
 - ESP32 provisioning: public MQTT hostname, Railway-assigned TCP port, trusted CA, controller ID, controller-specific username and one-time password. Never a bridge/gateway/database credential.

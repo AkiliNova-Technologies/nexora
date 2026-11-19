@@ -1,0 +1,15 @@
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+const require = createRequire(new URL("../bridge/package.json", import.meta.url));
+const { connect } = require("mqtt");
+const ca = readFileSync(process.env.TEST_CA_FILE);
+const client = connect("mqtts://localhost:18883", { clientId: "expired-command-observer", username: "controller-fixture-01", password: "controller-password-fixture-only-000000000", ca: [ca], rejectUnauthorized: true, reconnectPeriod: 0 });
+await new Promise((resolve, reject) => client.subscribe("smartestate/v1/house-fixture-01/light-fixture-01/command", { qos: 1 }, (error) => error ? reject(error) : resolve()));
+let received = false;
+client.on("message", () => { received = true; });
+const response = await fetch("https://localhost:8443/arm-expired", { headers: { authorization: "Bearer gateway-credential-fixture-only", "x-iot-gateway-id": "gateway-fixture" } });
+if (!response.ok) throw new Error(`arm_${response.status}`);
+await new Promise((resolve) => setTimeout(resolve, 2500));
+await new Promise((resolve) => client.end(false, {}, resolve));
+if (received) throw new Error("expired_command_was_published");
+process.stdout.write("expired_command_not_published\n");

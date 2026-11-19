@@ -76,6 +76,11 @@ export class Bridge {
     try {
       const parsed = parseInbound(topic, payload, this.syncState, this.maxPayloadBytes);
       if (parsed.type === "heartbeat") {
+        const occurredAt = typeof parsed.body.occurredAt === "string" ? Date.parse(parsed.body.occurredAt) : Number.NaN;
+        if (!Number.isFinite(occurredAt) || occurredAt < Date.now() - 35_000 || occurredAt > Date.now() + 300_000) {
+          log("warn", "stale_heartbeat_ignored", { controllerId: parsed.controllerId });
+          return;
+        }
         await this.cloud.heartbeat(parsed.controllerId, parsed.body);
         const bootId = typeof parsed.body.bootId === "string" ? parsed.body.bootId : "";
         if (bootId && this.store.observeBoot(parsed.controllerId, bootId)) {
@@ -91,6 +96,17 @@ export class Bridge {
       }
     } catch (error) {
       log("warn", "mqtt_message_rejected", { topic, error: error instanceof Error ? error.message : "unknown" });
+    }
+  }
+
+  persistBeforeMqttAck(topic: string, payload: Buffer, done: (error: Error | number, code?: number) => void) {
+    try {
+      const parsed = parseInbound(topic, payload, this.syncState, this.maxPayloadBytes);
+      if (parsed.type === "device") this.store.enqueueEvent(parsed.event);
+      done(0);
+    } catch (error) {
+      log("warn", "mqtt_ack_withheld", { topic, error: error instanceof Error ? error.message : "unknown" });
+      done(error instanceof Error ? error : new Error("mqtt_persistence_failed"), 128);
     }
   }
 
