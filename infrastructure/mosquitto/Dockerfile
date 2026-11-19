@@ -1,6 +1,6 @@
 FROM eclipse-mosquitto:2.0.22
 USER root
-RUN apk add --no-cache nodejs tini
+RUN apk add --no-cache nodejs tini su-exec
 COPY mosquitto.conf.template /mosquitto/config/mosquitto.conf.template
 COPY entrypoint.sh /usr/local/bin/nexora-mosquitto-entrypoint
 COPY tools /opt/nexora/tools
