@@ -20,6 +20,9 @@ export class CloudClient {
     const result = await this.request<{ commands: CloudCommand[] }>(`/api/iot/v1/commands?limit=${limit}`);
     return result.commands;
   }
+  async confirmCommand(commandId: string, leaseId: string) {
+    return await this.request<{ confirmed: true }>("/api/iot/v1/commands", { method: "POST", body: JSON.stringify({ commandId, leaseId }) });
+  }
   async sendEvents(events: CloudEvent[]) {
     return await this.request<{ acceptedEventIds: string[] }>("/api/iot/v1/events", { method: "POST", body: JSON.stringify({ events }) });
   }

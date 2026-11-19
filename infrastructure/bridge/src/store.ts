@@ -57,6 +57,9 @@ export class BridgeStore {
   deliveryState(commandId: string) {
     return this.db.prepare("SELECT state,dangerous,expires_at FROM command_delivery WHERE command_id=?").get(commandId) as { state: string; dangerous: number; expires_at: number } | undefined;
   }
+  pendingClaims(limit = 20): CloudCommand[] {
+    return this.db.prepare("SELECT payload FROM command_delivery WHERE state='CLAIMED' AND expires_at>? ORDER BY updated_at LIMIT ?").all(Date.now(), limit).map((row) => JSON.parse(String((row as { payload: string }).payload)) as CloudCommand);
+  }
   setDeliveryState(commandId: string, state: "PUBLISHING" | "PUBLISHED" | "UNCERTAIN" | "TERMINAL") {
     this.db.prepare("UPDATE command_delivery SET state=?,updated_at=? WHERE command_id=?").run(state, Date.now(), commandId);
   }

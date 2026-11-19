@@ -42,6 +42,20 @@ create table if not exists smart_estate.controller (
 create index if not exists controller_estate_idx on smart_estate.controller(estate_id);
 create index if not exists controller_last_seen_idx on smart_estate.controller(last_seen_at desc);
 
+-- A gateway lease does not accept a command. The bridge must first persist the
+-- command durably, then confirm this identity-bound lease before publication.
+alter table smart_estate.device_command
+  add column if not exists delivery_lease_id uuid,
+  add column if not exists delivery_lease_expires_at timestamptz;
+alter table smart_estate.device_command drop constraint if exists device_command_delivery_lease_pair;
+alter table smart_estate.device_command add constraint device_command_delivery_lease_pair check (
+  (delivery_lease_id is null and delivery_lease_expires_at is null) or
+  (delivery_lease_id is not null and delivery_lease_expires_at is not null)
+);
+create index if not exists device_command_gateway_lease_idx
+  on smart_estate.device_command(gateway_id,delivery_lease_expires_at)
+  where status='PENDING';
+
 create table if not exists smart_estate.controller_house (
   controller_id text not null,
   controller_estate_id text not null,

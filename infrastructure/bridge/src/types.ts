@@ -1,5 +1,6 @@
 export type CloudCommand = {
   commandId: string;
+  leaseId: string;
   scopeId: string;
   deviceId: string;
   controllerId: string;

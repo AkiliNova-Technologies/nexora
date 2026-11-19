@@ -94,13 +94,22 @@ export async function submitCommand(userId: string, deviceId: string, body: Reco
 
 export function commandDto(row: Record<string, unknown>) { return { id: row.id, deviceId: row.device_id, type: row.type, parameters: row.parameters, status: row.status, requestedAt: row.requested_at, completedAt: row.completed_at, error: row.error, requestedBy: row.requested_by, physicalPositionVerification: row.type === "OPEN_GATE" || row.type === "CLOSE_GATE" ? "UNVERIFIED" : null }; }
 
-export async function claimCommands(gatewayId: string, limit: number) {
+export async function leaseCommands(gatewayId: string, limit: number) {
   const sql = getSql();
   return sql.begin(async (tx) => {
     await tx`update smart_estate.device_command set status='TIMEOUT',completed_at=now(),error='Command expired before gateway delivery' where gateway_id=${gatewayId} and status in ('PENDING','ACCEPTED') and expires_at<=now()`;
-    const rows = await tx`with selected as (select id from smart_estate.device_command where gateway_id=${gatewayId} and status='PENDING' and expires_at>now() order by requested_at for update skip locked limit ${limit}) update smart_estate.device_command c set status='ACCEPTED',accepted_at=coalesce(c.accepted_at,now()) from selected where c.id=selected.id returning c.id command_id,c.device_id,c.type,c.parameters,c.requested_at,c.expires_at,(select coalesce(d.house_id,d.estate_id) from smart_estate.device d where d.id=c.device_id) scope_id,(select d.controller_id from smart_estate.device d where d.id=c.device_id) controller_id`;
-    if (rows.length) await tx`update smart_estate.device_state set command_status='ACCEPTED',version=version+1 where device_id in ${tx(rows.map((row) => row.device_id))}`;
-    return rows.map((row) => ({ commandId: row.command_id, controllerId: row.controller_id, scopeId: row.scope_id, deviceId: row.device_id, type: row.type === "OPEN_GATE" ? "OPEN" : row.type === "CLOSE_GATE" ? "CLOSE" : row.type, parameters: row.parameters, issuedAt: row.requested_at, expiresAt: row.expires_at }));
+    const rows = await tx`with selected as (select id from smart_estate.device_command where gateway_id=${gatewayId} and status='PENDING' and expires_at>now() and (delivery_lease_expires_at is null or delivery_lease_expires_at<=now()) order by requested_at for update skip locked limit ${limit}) update smart_estate.device_command c set delivery_lease_id=gen_random_uuid(),delivery_lease_expires_at=least(c.expires_at,now()+interval '15 seconds') from selected where c.id=selected.id returning c.id command_id,c.delivery_lease_id lease_id,c.device_id,c.type,c.parameters,c.requested_at,c.expires_at,(select coalesce(d.house_id,d.estate_id) from smart_estate.device d where d.id=c.device_id) scope_id,(select d.controller_id from smart_estate.device d where d.id=c.device_id) controller_id`;
+    return rows.map((row) => ({ commandId: row.command_id, leaseId: row.lease_id, controllerId: row.controller_id, scopeId: row.scope_id, deviceId: row.device_id, type: row.type === "OPEN_GATE" ? "OPEN" : row.type === "CLOSE_GATE" ? "CLOSE" : row.type, parameters: row.parameters, issuedAt: row.requested_at, expiresAt: row.expires_at }));
+  });
+}
+
+export async function confirmCommandLease(gatewayId: string, commandId: string, leaseId: string) {
+  const sql = getSql();
+  return sql.begin(async (tx) => {
+    const rows = await tx`update smart_estate.device_command set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=${commandId}::uuid and gateway_id=${gatewayId} and delivery_lease_id=${leaseId}::uuid and ((status='PENDING' and delivery_lease_expires_at>now() and expires_at>now()) or (status='ACCEPTED' and accepted_at is not null)) returning device_id`;
+    if (!rows[0]) return false;
+    await tx`update smart_estate.device_state set command_status='ACCEPTED',version=version+1 where device_id=${rows[0].device_id} and command_status='PENDING'`;
+    return true;
   });
 }
 

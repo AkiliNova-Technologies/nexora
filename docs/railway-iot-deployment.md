@@ -3,10 +3,10 @@
 Status: owner runbook; do not execute until infrastructure creation is approved.
 
 1. Validate `20261119150000_controller_management.sql` against a disposable production-schema snapshot.
-2. Create one Railway project/environment in the selected region.
+2. Create project `nexora-iot` with a production environment in EU West Metal, Amsterdam (`europe-west4-drams3a`).
 3. Create `nexora-mqtt` from `infrastructure/mosquitto`, mount `/mosquitto/data`, and provide the five `/run/secrets/*` files in its `.env.example` through an approved secret bootstrap.
 4. Create a raw TCP proxy for internal port 8883. The externally assigned port may differ.
-5. Set DNS-only `mqtt.<owned-domain>` as CNAME to the TCP proxy hostname and install a certificate whose SAN matches the owned name.
+5. Record the generated Railway TCP proxy hostname and port. Generate a dedicated private CA offline and sign the broker certificate with that exact proxy hostname as its DNS SAN. No custom domain is required.
 6. Create `nexora-iot-bridge` from `infrastructure/bridge`, mount `/data`, and set its `.env.example` variables. Use private broker DNS with `mqtts://...:8883`.
 7. Set the bridge HTTP health check to `/readyz` on `BRIDGE_HEALTH_PORT`.
 8. Apply the reviewed migration and Vercel variables only in a separately authorized release window.
@@ -17,7 +17,7 @@ Dashboard workflow: create two GitHub services, set each root directory and Dock
 
 Railway supports raw TCP proxies, custom DNS CNAMEs, private service DNS, Dockerfiles and volumes. TCP custom domains still use the Railway-assigned port; Cloudflare must be DNS-only. HTTP health checks gate deployments, so the worker exposes HTTP readiness while broker diagnostics use container health/logs.
 
-Current rates are $10/GB-month RAM, $20/vCPU-month CPU, $0.15/GB-month volume and $0.05/GB egress. Hobby has a $5 monthly minimum/credit model. Budget roughly $10–25/month for two small always-on services before measurement, plus domain/certificate automation. Reconfirm pricing at deployment.
+Current rates are $10/GB-month RAM, $20/vCPU-month CPU, $0.15/GB-month volume and $0.05/GB egress. Hobby has a $5 monthly minimum with $5 included usage; Pro has a $20 minimum with $20 included. Budget $10–25/month initially for the two always-on services, then replace the estimate with measured CPU/RAM after 72 hours. No domain cost applies to the selected private-CA/Railway-hostname design.
 
 Rollback: stop onboarding, disable the public TCP proxy, revoke identities, stop the bridge, preserve both volumes, and roll Vercel back independently. Use a forward database fix; do not drop additive production tables. Never replay uncertain gate/siren records.
 

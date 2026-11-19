@@ -123,18 +123,23 @@ export class Bridge {
   }
 
   private async pollCommands() {
-    for (const command of await this.cloud.claimCommands()) await this.deliver(command);
+    for (const command of this.store.pendingClaims()) await this.confirmAndDeliver(command);
+    for (const command of await this.cloud.claimCommands()) {
+      if (!this.registrationFor(command) || Date.parse(command.expiresAt) <= Date.now()) continue;
+      this.store.recordClaim(command);
+      await this.confirmAndDeliver(command);
+    }
   }
 
   private registrationFor(command: CloudCommand) {
     return this.syncState.controllers.find((controller) => controller.controllerId === command.controllerId && controller.devices.some((device) => device.deviceId === command.deviceId && device.scopeId === command.scopeId));
   }
 
-  private async deliver(command: CloudCommand) {
+  private async confirmAndDeliver(command: CloudCommand) {
     if (!this.registrationFor(command) || Date.parse(command.expiresAt) <= Date.now()) return;
-    this.store.recordClaim(command);
     const delivery = this.store.deliveryState(command.commandId);
     if (!delivery || delivery.state !== "CLAIMED") return;
+    await this.cloud.confirmCommand(command.commandId, command.leaseId);
     this.store.setDeliveryState(command.commandId, "PUBLISHING");
     try {
       await publishQos1(this.mqtt, commandTopic(command), JSON.stringify(command));
