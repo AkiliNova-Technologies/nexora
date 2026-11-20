@@ -1,0 +1,25 @@
+{
+  "controller": {
+    "id": "ctrl-aura-main-01",
+    "name": "Nexora Estate Controller",
+    "estateId": "estate-aura",
+    "gatewayId": "nexora-aura-gateway-01",
+    "hardwareIdentity": "00:70:07:a2:2d:84"
+  },
+  "houseMappings": { "house1": "house-ae-1-block", "house2": "house-ae-2-block" },
+  "devices": [
+    { "id": "dev-h1-light-1", "logicalName": "house1.light1", "scope": "house1", "type": "LIGHT", "capabilities": [{ "type": "POWER" }], "gpio": 16 },
+    { "id": "dev-h1-light-2", "logicalName": "house1.light2", "scope": "house1", "type": "LIGHT", "capabilities": [{ "type": "POWER" }], "gpio": 17 },
+    { "id": "dev-h1-fan", "logicalName": "house1.fan", "scope": "house1", "type": "FAN", "capabilities": [{ "type": "POWER" }], "gpio": 23 },
+    { "id": "dev-h1-ultrasonic", "logicalName": "house1.ultrasonic", "scope": "house1", "type": "ULTRASONIC_SENSOR", "capabilities": [], "gpios": [4,34] },
+    { "id": "dev-h2-light-1", "logicalName": "house2.light1", "scope": "house2", "type": "LIGHT", "capabilities": [{ "type": "POWER" }], "gpio": 18 },
+    { "id": "dev-h2-light-2", "logicalName": "house2.light2", "scope": "house2", "type": "LIGHT", "capabilities": [{ "type": "POWER" }], "gpio": 19 },
+    { "id": "dev-h2-ultrasonic", "logicalName": "house2.ultrasonic", "scope": "house2", "type": "ULTRASONIC_SENSOR", "capabilities": [], "gpios": [5,35] },
+    { "id": "dev-perimeter-pir-1", "logicalName": "perimeter.pir1", "scope": "estate", "type": "MOTION_SENSOR", "capabilities": [], "gpio": 32 },
+    { "id": "dev-perimeter-pir-2", "logicalName": "perimeter.pir2", "scope": "estate", "type": "MOTION_SENSOR", "capabilities": [], "gpio": 33 },
+    { "id": "dev-perimeter-strip", "logicalName": "perimeter.strip", "scope": "estate", "type": "RGB_LIGHT", "capabilities": [{ "type": "POWER" }, { "type": "BRIGHTNESS", "min": 0, "max": 100 }, { "type": "RGB_COLOR" }], "gpio": 22 },
+    { "id": "dev-estate-siren", "logicalName": "estate.siren", "scope": "estate", "type": "SIREN", "capabilities": [{ "type": "SIREN_CONTROL", "maxDurationSeconds": 30 }], "gpio": 13 },
+    { "id": "dev-estate-gate", "logicalName": "estate.gate", "scope": "estate", "type": "GATE", "capabilities": [{ "type": "GATE_CONTROL" }], "gpios": [25,26,27,14], "limitGpios": [36,39] },
+    { "id": "dev-estate-big-fan", "logicalName": "estate.bigFan", "scope": "estate", "type": "FAN", "capabilities": [{ "type": "POWER" }], "gpio": 21 }
+  ]
+}

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseRouteClient, requireUser } from "@/lib/supabase/server";
-import { CommandSubmissionError, dashboard, deviceState, devices, houses, profile, rooms, submitCommand } from "@/lib/cloud/repository";
+import { CommandSubmissionError, dashboard, deviceState, devices, estateDevices, houses, profile, rooms, submitCommand } from "@/lib/cloud/repository";
 import { getSql } from "@/lib/cloud/db";
 import { validateMutationRequest } from "@/lib/cloud/security";
 import { diagnosticRoute, elapsedMs, logServerTiming } from "@/lib/cloud/timing";
@@ -33,9 +33,10 @@ export async function GET(request: NextRequest, context: Context) {
     if (path.length === 1 && path[0] === "me") return NextResponse.json(await profile(user));
     if (path.length === 1 && path[0] === "houses") return NextResponse.json(await houses(user.id));
     if (path.length === 1 && path[0] === "estates") {
-      const rows = await sql`select e.id,e.name,e.timezone from smart_estate.estate e join smart_estate.estate_member m on m.estate_id=e.id where m.user_id=${user.id}::uuid and m.active order by e.name`;
+      const rows = await sql`select e.id,e.name,e.timezone from smart_estate.estate e where smart_estate.can_view_estate(${user.id}::uuid,e.id) order by e.name`;
       return NextResponse.json(rows);
     }
+    if (path.length === 3 && path[0] === "estates" && path[2] === "devices") return NextResponse.json(await estateDevices(user.id,path[1]));
     if (path.length === 1 && path[0] === "controllers") {
       const estateId = request.nextUrl.searchParams.get("estateId");
       if (!estateId) return jsonError(400,"ESTATE_REQUIRED","An estate ID is required");
@@ -74,7 +75,7 @@ export async function GET(request: NextRequest, context: Context) {
       const total = rows[0]?.total ?? 0; return NextResponse.json({ items: rows.map((row) => { const item = { ...row }; delete item.total; return item; }), page, pageSize, total, totalPages: Math.ceil(total / pageSize) });
     }
     if (path.length === 3 && path[0] === "estates" && path[2] === "gate") {
-      const rows = await sql`select d.id,d.estate_id,d.name,d.type,d.capabilities,d.execution_mode,s.connectivity,s.desired,s.reported,s.command_status,s.last_reported_at,m.can_control_gate from smart_estate.device d join smart_estate.device_state s on s.device_id=d.id join smart_estate.estate_member m on m.estate_id=d.estate_id and m.user_id=${user.id}::uuid and m.active where d.estate_id=${path[1]} and d.type='GATE' and m.can_view_shared_devices limit 1`;
+      const rows = await sql`select d.id,d.estate_id,d.name,d.type,d.capabilities,d.execution_mode,s.connectivity,s.desired,s.reported,s.command_status,s.last_reported_at,smart_estate.can_control_estate_device(${user.id}::uuid,d.estate_id,d.type) can_control_gate from smart_estate.device d join smart_estate.device_state s on s.device_id=d.id where d.estate_id=${path[1]} and d.type='GATE' and smart_estate.can_view_estate(${user.id}::uuid,d.estate_id) limit 1`;
       const row = rows[0]; if (!row) return jsonError(404, "GATE_NOT_FOUND", "Estate gate was not found");
       return NextResponse.json({ device: { id: row.id, estateId: row.estate_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_control_gate ? ["VIEW","READ_STATE","COMMAND"] : ["VIEW","READ_STATE"] }, state: { deviceId: row.id, connectivity: row.connectivity, desired: row.desired, reported: row.reported, commandStatus: row.command_status, lastReportedAt: row.last_reported_at }, physicalPositionVerification: "UNVERIFIED" });
     }

@@ -13,6 +13,7 @@
     { "logicalName": "perimeter.pir2", "scope": "estate", "type": "MOTION_SENSOR", "capabilities": [] },
     { "logicalName": "perimeter.strip", "scope": "estate", "type": "RGB_LIGHT", "capabilities": [{ "type": "POWER" }, { "type": "BRIGHTNESS", "min": 0, "max": 100 }, { "type": "RGB_COLOR" }] },
     { "logicalName": "estate.siren", "scope": "estate", "type": "SIREN", "capabilities": [{ "type": "SIREN_CONTROL", "maxDurationSeconds": 30 }] },
-    { "logicalName": "estate.gate", "scope": "estate", "type": "GATE", "capabilities": [{ "type": "GATE_CONTROL" }] }
+    { "logicalName": "estate.gate", "scope": "estate", "type": "GATE", "capabilities": [{ "type": "GATE_CONTROL" }] },
+    { "logicalName": "estate.bigFan", "scope": "estate", "type": "FAN", "capabilities": [{ "type": "POWER" }], "gpio": 21 }
   ]
 }

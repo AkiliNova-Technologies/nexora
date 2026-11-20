@@ -22,7 +22,13 @@ export async function profile(user: User) {
 
 export async function houses(userId: string) {
   const sql = getSql();
-  return sql`select distinct h.id, h.name, h.timezone from smart_estate.house h left join smart_estate.house_access a on a.house_id=h.id and a.user_id=${userId}::uuid and a.active where h.owner_id=${userId}::uuid or a.can_view order by h.name`;
+  return sql`select h.id,h.name,h.timezone from smart_estate.house h where smart_estate.can_view_house(${userId}::uuid,h.id) order by h.name`;
+}
+
+export async function estateDevices(userId: string, estateId: string) {
+  const sql = getSql();
+  const rows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type) can_command from smart_estate.device d where d.estate_id=${estateId} and d.house_id is null and smart_estate.can_view_estate(${userId}::uuid,d.estate_id) order by d.name`;
+  return rows.map((row) => ({ id: row.id, houseId: row.house_id, estateId: row.estate_id, roomId: row.room_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_command ? ["VIEW", "READ_STATE", "COMMAND"] : ["VIEW", "READ_STATE"] }));
 }
 
 export async function rooms(userId: string, houseId: string) {

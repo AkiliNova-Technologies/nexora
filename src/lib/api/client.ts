@@ -58,6 +58,7 @@ export class SmartEstateApiClient {
   estates = () => this.request<Estate[]>("/estates");
   controllers=(estateId:string)=>this.request<ControllerSummary[]>(`/controllers?estateId=${encodeURIComponent(estateId)}`);
   gate = (estateId: string) => this.request<GateResource>(`/estates/${estateId}/gate`);
+  estateDevices = (estateId: string) => this.request<Device[]>(`/estates/${estateId}/devices`);
   rooms = (houseId: string) => this.request<Room[]>(`/houses/${houseId}/rooms`);
   devices = (houseId: string) => this.request<Device[]>(`/houses/${houseId}/devices`);
   state = (deviceId: string) => this.request<DeviceState>(`/devices/${deviceId}/state`);

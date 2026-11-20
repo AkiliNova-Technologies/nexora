@@ -12,6 +12,8 @@ begin
   insert into smart_estate.estate(id,name,timezone) values('validation-estate','Validation','UTC');
   insert into smart_estate.house(id,owner_id,estate_id,name,timezone) values
     ('validation-house-1',owner_id,'validation-estate','House 1','UTC');
+  insert into smart_estate.house(id,owner_id,estate_id,name,timezone) values
+    ('validation-house-admin-visible',other_id,'validation-estate','Admin visible house','UTC');
   insert into smart_estate.estate(id,name,timezone) values('validation-other-estate','Other','UTC');
   insert into smart_estate.house(id,owner_id,estate_id,name,timezone) values
     ('validation-other-house',other_id,'validation-other-estate','Other House','UTC');
@@ -24,6 +26,10 @@ begin
   if not smart_estate.is_estate_admin(estate_admin_id,'validation-estate') then raise exception 'admin authorization failed'; end if;
   if smart_estate.is_estate_admin(other_id,'validation-estate') then raise exception 'negative admin authorization failed'; end if;
   if smart_estate.can_control_estate_device(other_id,'validation-estate','SIREN') then raise exception 'non-admin siren authorization failed'; end if;
+  if not smart_estate.can_view_house(estate_admin_id,'validation-house-admin-visible') then raise exception 'administrator cross-house visibility failed'; end if;
+  if not smart_estate.can_control_house(estate_admin_id,'validation-house-admin-visible') then raise exception 'administrator cross-house control failed'; end if;
+  if not smart_estate.can_control_estate_device(estate_admin_id,'validation-estate','FAN') then raise exception 'administrator big fan authorization failed'; end if;
+  if smart_estate.can_control_estate_device(other_id,'validation-estate','FAN') then raise exception 'non-admin big fan authorization failed'; end if;
 
   begin
     insert into smart_estate.controller_house(controller_id,controller_estate_id,house_id)

@@ -3,7 +3,7 @@ import { ALEXA_SCOPE, AUTHORIZATION_CODE_TTL_SECONDS, opaqueToken, tokenHash } f
 
 export async function hasAlexaEligibleControl(userId: string) {
   const sql = getSql();
-  const rows = await sql`select exists(select 1 from smart_estate.device d where d.type in ('LIGHT','FAN') and ((d.house_id is not null and smart_estate.can_control_house(${userId}::uuid,d.house_id)) or (d.estate_id is not null and smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type)))) allowed`;
+  const rows = await sql`select exists(select 1 from smart_estate.device d where d.house_id is not null and d.type in ('LIGHT','FAN') and smart_estate.can_control_house(${userId}::uuid,d.house_id)) allowed`;
   return Boolean(rows[0]?.allowed);
 }
 
