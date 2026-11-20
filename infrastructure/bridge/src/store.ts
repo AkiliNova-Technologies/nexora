@@ -42,7 +42,7 @@ export class BridgeStore {
     this.db.prepare("INSERT OR IGNORE INTO outbound_event(event_id,payload,next_attempt_at,created_at) VALUES(?,?,?,?)").run(event.eventId, JSON.stringify(event), now, now);
   }
   pendingEvents(limit = 50): CloudEvent[] {
-    return this.db.prepare("SELECT payload FROM outbound_event WHERE next_attempt_at<=? ORDER BY created_at LIMIT ?").all(Date.now(), limit).map((row) => JSON.parse(String((row as { payload: string }).payload)) as CloudEvent);
+    return this.db.prepare("SELECT payload FROM outbound_event WHERE next_attempt_at<=? ORDER BY CASE WHEN json_extract(payload,'$.kind')='ack' THEN 0 ELSE 1 END, created_at, rowid LIMIT ?").all(Date.now(), limit).map((row) => JSON.parse(String((row as { payload: string }).payload)) as CloudEvent);
   }
   acceptEvents(ids: string[]) {
     const remove = this.db.prepare("DELETE FROM outbound_event WHERE event_id=?");
@@ -51,8 +51,13 @@ export class BridgeStore {
   }
   retryEvents(ids: string[], error: string) {
     const update = this.db.prepare("UPDATE outbound_event SET attempts=attempts+1,next_attempt_at=?,last_error=? WHERE event_id=?");
-    const delay = Math.min(300000, 1000 * 2 ** Math.min(8, Number((this.db.prepare("SELECT max(attempts) value FROM outbound_event").get() as { value?: number }).value || 0)));
-    for (const id of ids) update.run(Date.now() + delay, error.slice(0, 500), id);
+    const attempts = this.db.prepare("SELECT attempts FROM outbound_event WHERE event_id=?");
+    for (const id of ids) {
+      const row = attempts.get(id) as { attempts: number } | undefined;
+      if (!row) continue;
+      const delay = Math.min(300000, 1000 * 2 ** Math.min(8, row.attempts));
+      update.run(Date.now() + delay, error.slice(0, 500), id);
+    }
   }
   recordClaim(command: CloudCommand) {
     const dangerous = ["OPEN", "CLOSE", "ACTIVATE_SIREN", "STOP_SIREN"].includes(command.type) ? 1 : 0;
