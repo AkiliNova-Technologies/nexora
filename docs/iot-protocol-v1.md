@@ -12,8 +12,12 @@ Controller topics are deliberately narrow:
 
 - Publish: `smartestate/v1/controllers/{controllerId}/heartbeat`
 - Subscribe: `smartestate/v1/controllers/{controllerId}/security-mode`
+- Subscribe: `smartestate/v1/controllers/{controllerId}/provisioning`
+- Publish: `smartestate/v1/controllers/{controllerId}/provisioning/ack`
 
 ACLs must enumerate the controller's registered topics. A controller must not receive `#`, another controller's topics, or both houses merely because it shares an estate.
+
+Provisioning uses a non-retained `OPEN_PROVISIONING_WINDOW` envelope with a UUID `commandId`, an absolute `expiresAt` no more than ten minutes ahead, and `parameters.durationSeconds` from 60 through 600. The controller durably rejects the last processed window command, opens only its controller-specific WPA2 setup network, and still requires the local proof of possession before accepting a Wi-Fi profile. The candidate profile is committed only after both Wi-Fi and MQTT succeed; otherwise the prior NVS profile is restored. Wi-Fi credentials are never sent through MQTT or the cloud API.
 
 ## Common rules
 

@@ -17,7 +17,13 @@ for (const controller of registry.controllers) {
   const password = users.get(controller.username);
   if (typeof password !== "string" || password.length < 32) throw new Error(`Missing high-entropy credential for ${controller.username}`);
   execFileSync("mosquitto_passwd", ["-b", passwordFile, controller.username, password], { stdio: "ignore" });
-  acl.push(`user ${controller.username}`, `topic write smartestate/v1/controllers/${controller.controllerId}/heartbeat`, `topic read smartestate/v1/controllers/${controller.controllerId}/security-mode`);
+  acl.push(
+    `user ${controller.username}`,
+    `topic write smartestate/v1/controllers/${controller.controllerId}/heartbeat`,
+    `topic read smartestate/v1/controllers/${controller.controllerId}/security-mode`,
+    `topic read smartestate/v1/controllers/${controller.controllerId}/provisioning`,
+    `topic write smartestate/v1/controllers/${controller.controllerId}/provisioning/ack`,
+  );
   for (const device of controller.devices) {
     if (!id.test(device.deviceId) || !id.test(device.scopeId)) throw new Error("Invalid device registry entry");
     const prefix = `smartestate/v1/${device.scopeId}/${device.deviceId}`;
@@ -32,7 +38,12 @@ if (typeof bridgePassword !== "string" || bridgePassword.length < 32) throw new 
 execFileSync("mosquitto_passwd", ["-b", passwordFile, bridge.username, bridgePassword], { stdio: "ignore" });
 acl.push(`user ${bridge.username}`);
 for (const controller of registry.controllers) {
-  acl.push(`topic read smartestate/v1/controllers/${controller.controllerId}/heartbeat`, `topic write smartestate/v1/controllers/${controller.controllerId}/security-mode`);
+  acl.push(
+    `topic read smartestate/v1/controllers/${controller.controllerId}/heartbeat`,
+    `topic write smartestate/v1/controllers/${controller.controllerId}/security-mode`,
+    `topic write smartestate/v1/controllers/${controller.controllerId}/provisioning`,
+    `topic read smartestate/v1/controllers/${controller.controllerId}/provisioning/ack`,
+  );
   for (const device of controller.devices) {
     const prefix = `smartestate/v1/${device.scopeId}/${device.deviceId}`;
     acl.push(`topic write ${prefix}/command`, `topic read ${prefix}/ack`, `topic read ${prefix}/state`, `topic read ${prefix}/status`, `topic read ${prefix}/event`);
