@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseRouteClient, requireUser } from "@/lib/supabase/server";
-import { CommandSubmissionError, dashboard, deviceState, devices, estateDevices, houses, profile, rooms, submitCommand } from "@/lib/cloud/repository";
+import { adminOverview, assignHouseOwner,CommandSubmissionError, dashboard, deviceState, devices, estateDevices, houses, profile, rooms, submitCommand } from "@/lib/cloud/repository";
 import { getSql } from "@/lib/cloud/db";
 import { validateMutationRequest } from "@/lib/cloud/security";
 import { diagnosticRoute, elapsedMs, logServerTiming } from "@/lib/cloud/timing";
@@ -33,8 +33,12 @@ export async function GET(request: NextRequest, context: Context) {
     if (path.length === 1 && path[0] === "me") return NextResponse.json(await profile(user));
     if (path.length === 1 && path[0] === "houses") return NextResponse.json(await houses(user.id));
     if (path.length === 1 && path[0] === "estates") {
-      const rows = await sql`select e.id,e.name,e.timezone from smart_estate.estate e where smart_estate.can_view_estate(${user.id}::uuid,e.id) order by e.name`;
+      const rows = await sql`select e.id,e.name,e.timezone from smart_estate.estate e where smart_estate.can_view_estate(${user.id}::uuid,e.id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=e.id and a.user_id=${user.id}::uuid and a.active) order by e.name`;
       return NextResponse.json(rows);
+    }
+    if (path.length === 2 && path[0] === "admin" && path[1] === "overview") {
+      const value = await adminOverview(user.id,request.nextUrl.searchParams.get("estateId"));
+      return value ? NextResponse.json(value) : jsonError(403,"ESTATE_ADMIN_REQUIRED","An active estate administrator assignment is required");
     }
     if (path.length === 3 && path[0] === "estates" && path[2] === "devices") return NextResponse.json(await estateDevices(user.id,path[1]));
     if (path.length === 1 && path[0] === "controllers") {
@@ -57,16 +61,16 @@ export async function GET(request: NextRequest, context: Context) {
       const row = rows[0]; return row ? NextResponse.json({ id: row.id, deviceId: row.device_id, type: row.type, parameters: row.parameters, status: row.status, requestedAt: row.requested_at, completedAt: row.completed_at, error: row.error, requestedBy: row.requested_by, physicalPositionVerification: row.type === "OPEN_GATE" || row.type === "CLOSE_GATE" ? "UNVERIFIED" : null }) : jsonError(404, "COMMAND_NOT_FOUND", "Device command was not found");
     }
     if (path.length === 3 && path[0] === "houses" && path[2] === "security-mode") {
-      const rows = await sql`select s.house_id "houseId",s.mode,s.version,s.updated_at "updatedAt" from smart_estate.house_security_state s where s.house_id=${path[1]} and smart_estate.can_view_house(${user.id}::uuid,s.house_id)`;
+      const rows = await sql`select s.house_id "houseId",s.mode,s.version,s.updated_at "updatedAt" from smart_estate.house_security_state s join smart_estate.house h on h.id=s.house_id where s.house_id=${path[1]} and (smart_estate.can_view_house(${user.id}::uuid,s.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active))`;
       return rows[0] ? NextResponse.json(rows[0]) : jsonError(404, "HOUSE_NOT_FOUND", "House was not found");
     }
     if (path.length === 3 && path[0] === "houses" && path[2] === "security-sensor-policies") {
-      const rows = await sql`select p.house_id "houseId",p.device_id "deviceId",p.enabled,p.monitor_armed_home "monitorArmedHome",p.monitor_armed_away "monitorArmedAway",p.version,p.updated_at "updatedAt",p.metadata from smart_estate.security_sensor_policy p where p.house_id=${path[1]} and smart_estate.can_view_house(${user.id}::uuid,p.house_id) order by p.device_id`;
+      const rows = await sql`select p.house_id "houseId",p.device_id "deviceId",p.enabled,p.monitor_armed_home "monitorArmedHome",p.monitor_armed_away "monitorArmedAway",p.version,p.updated_at "updatedAt",p.metadata from smart_estate.security_sensor_policy p join smart_estate.house h on h.id=p.house_id where p.house_id=${path[1]} and (smart_estate.can_view_house(${user.id}::uuid,p.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active)) order by p.device_id`;
       return NextResponse.json(rows);
     }
     if (path.length === 3 && path[0] === "houses" && path[2] === "security-events") {
       const limit = Math.min(100, Math.max(1, Number(request.nextUrl.searchParams.get("limit") || 50)));
-      const rows = await sql`select e.id,e.house_id "houseId",e.device_id "deviceId",e.type,e.severity,e.occurred_at "occurredAt",e.received_at "receivedAt",e.metadata,e.acknowledged_at "acknowledgedAt" from smart_estate.security_event e where e.house_id=${path[1]} and smart_estate.can_view_house(${user.id}::uuid,e.house_id) order by e.occurred_at desc limit ${limit}`;
+      const rows = await sql`select e.id,e.house_id "houseId",e.device_id "deviceId",e.type,e.severity,e.occurred_at "occurredAt",e.received_at "receivedAt",e.metadata,e.acknowledged_at "acknowledgedAt" from smart_estate.security_event e join smart_estate.house h on h.id=e.house_id where e.house_id=${path[1]} and (smart_estate.can_view_house(${user.id}::uuid,e.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active)) order by e.occurred_at desc limit ${limit}`;
       return NextResponse.json(rows);
     }
     if (path.length === 4 && path[0] === "houses" && path[2] === "security-events" && path[3] === "page") {
@@ -75,7 +79,7 @@ export async function GET(request: NextRequest, context: Context) {
       const total = rows[0]?.total ?? 0; return NextResponse.json({ items: rows.map((row) => { const item = { ...row }; delete item.total; return item; }), page, pageSize, total, totalPages: Math.ceil(total / pageSize) });
     }
     if (path.length === 3 && path[0] === "estates" && path[2] === "gate") {
-      const rows = await sql`select d.id,d.estate_id,d.name,d.type,d.capabilities,d.execution_mode,s.connectivity,s.desired,s.reported,s.command_status,s.last_reported_at,smart_estate.can_control_estate_device(${user.id}::uuid,d.estate_id,d.type) can_control_gate from smart_estate.device d join smart_estate.device_state s on s.device_id=d.id where d.estate_id=${path[1]} and d.type='GATE' and smart_estate.can_view_estate(${user.id}::uuid,d.estate_id) limit 1`;
+      const rows = await sql`select d.id,d.estate_id,d.name,d.type,d.capabilities,d.execution_mode,s.connectivity,s.desired,s.reported,s.command_status,s.last_reported_at,(smart_estate.can_control_estate_device(${user.id}::uuid,d.estate_id,d.type) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${user.id}::uuid and a.active)) can_control_gate from smart_estate.device d join smart_estate.device_state s on s.device_id=d.id where d.estate_id=${path[1]} and d.type='GATE' and (smart_estate.can_view_estate(${user.id}::uuid,d.estate_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${user.id}::uuid and a.active)) limit 1`;
       const row = rows[0]; if (!row) return jsonError(404, "GATE_NOT_FOUND", "Estate gate was not found");
       return NextResponse.json({ device: { id: row.id, estateId: row.estate_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_control_gate ? ["VIEW","READ_STATE","COMMAND"] : ["VIEW","READ_STATE"] }, state: { deviceId: row.id, connectivity: row.connectivity, desired: row.desired, reported: row.reported, commandStatus: row.command_status, lastReportedAt: row.last_reported_at }, physicalPositionVerification: "UNVERIFIED" });
     }
@@ -117,6 +121,12 @@ async function mutation(request: NextRequest, context: Context) {
     if (path.join("/") === "auth/logout") { await supabase.auth.signOut(); return routeClient.applyCookies(new NextResponse(null, { status: 204 })); }
     const user = await authenticated(); if (!user) return jsonError(401, "UNAUTHENTICATED", "Authentication is required");
     const sql = getSql();
+    if(request.method==="PUT"&&path.length===4&&path[0]==="admin"&&path[1]==="houses"&&path[3]==="owner"){
+      const ownerId=String(body.ownerId??"");
+      if(!/^[0-9a-f-]{36}$/i.test(ownerId))return jsonError(400,"INVALID_OWNER","A valid resident ID is required");
+      const result=await assignHouseOwner(user.id,path[2],ownerId);
+      return result?NextResponse.json(result):jsonError(404,"HOUSE_NOT_FOUND","House was not found in an administered estate");
+    }
     if (path.length === 3 && path[0] === "devices" && path[2] === "commands") {
       const command = await submitCommand(user.id, path[1], body); return command ? NextResponse.json(command, { status: 202 }) : jsonError(404, "DEVICE_NOT_FOUND", "Device was not found");
     }
@@ -130,13 +140,13 @@ async function mutation(request: NextRequest, context: Context) {
       const mode = typeof body.mode === "string" && ["DISARMED","ARMED_HOME","ARMED_AWAY"].includes(body.mode) ? body.mode : null;
       const expectedVersion = Number(body.expectedVersion);
       if (!mode || !Number.isInteger(expectedVersion)) return jsonError(400, "INVALID_SECURITY_MODE", "A valid mode and version are required");
-      const rows = await sql`update smart_estate.house_security_state s set mode=${mode},version=version+1,updated_at=now() where s.house_id=${path[1]} and s.version=${expectedVersion} and smart_estate.can_manage_house_security(${user.id}::uuid,s.house_id) returning s.house_id "houseId",s.mode,s.version,s.updated_at "updatedAt"`;
+      const rows = await sql`update smart_estate.house_security_state s set mode=${mode},version=version+1,updated_at=now() from smart_estate.house h where h.id=s.house_id and s.house_id=${path[1]} and s.version=${expectedVersion} and (smart_estate.can_manage_house_security(${user.id}::uuid,s.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active)) returning s.house_id "houseId",s.mode,s.version,s.updated_at "updatedAt"`;
       return rows[0] ? NextResponse.json(rows[0]) : jsonError(409, "VERSION_CONFLICT", "Security mode changed; refresh and retry");
     }
     if (request.method === "PUT" && path.length === 4 && path[0] === "houses" && path[2] === "security-sensor-policies") {
       const expectedVersion = Number(body.expectedVersion);
       if (!Number.isInteger(expectedVersion) || typeof body.enabled !== "boolean" || typeof body.monitorArmedHome !== "boolean" || typeof body.monitorArmedAway !== "boolean") return jsonError(400, "INVALID_POLICY", "A valid policy and version are required");
-      const rows = await sql`update smart_estate.security_sensor_policy p set enabled=${body.enabled},monitor_armed_home=${body.monitorArmedHome},monitor_armed_away=${body.monitorArmedAway},version=version+1,updated_at=now() where p.house_id=${path[1]} and p.device_id=${path[3]} and p.version=${expectedVersion} and smart_estate.can_manage_house_security(${user.id}::uuid,p.house_id) returning p.house_id "houseId",p.device_id "deviceId",p.enabled,p.monitor_armed_home "monitorArmedHome",p.monitor_armed_away "monitorArmedAway",p.version,p.updated_at "updatedAt",p.metadata`;
+      const rows = await sql`update smart_estate.security_sensor_policy p set enabled=${body.enabled},monitor_armed_home=${body.monitorArmedHome},monitor_armed_away=${body.monitorArmedAway},version=version+1,updated_at=now() from smart_estate.house h where h.id=p.house_id and p.house_id=${path[1]} and p.device_id=${path[3]} and p.version=${expectedVersion} and (smart_estate.can_manage_house_security(${user.id}::uuid,p.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active)) returning p.house_id "houseId",p.device_id "deviceId",p.enabled,p.monitor_armed_home "monitorArmedHome",p.monitor_armed_away "monitorArmedAway",p.version,p.updated_at "updatedAt",p.metadata`;
       return rows[0] ? NextResponse.json(rows[0]) : jsonError(409, "VERSION_CONFLICT", "Sensor policy changed; refresh and retry");
     }
     return jsonError(404, "NOT_FOUND", "API route was not found");

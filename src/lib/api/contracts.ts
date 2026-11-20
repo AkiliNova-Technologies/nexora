@@ -69,6 +69,12 @@ export interface DashboardResponse {
 }
 export interface SecurityEventPage { items: SecurityEvent[]; page: number; pageSize: number; total: number; totalPages: number; }
 export interface ControllerSummary {id:string;estateId:string;gatewayId:string;name:string;hardwareIdentity:string;registrationState:"PENDING"|"PAIRED"|"REVOKED";pairingState:"UNPAIRED"|"CHALLENGE_ISSUED"|"PAIRED"|"REVOKED";firmwareVersion?:string|null;credentialVersion:number;revokedAt?:string|null;wifiSsid?:string|null;wifiRssi?:number|null;networkState:DeviceState["connectivity"];mqttState:DeviceState["connectivity"];availability:DeviceState["connectivity"];lastHeartbeatAt?:string|null;lastSeenAt?:string|null;}
+export interface AdminHouseSummary {id:string;name:string;timezone:string;ownerId?:string|null;ownerName?:string|null;ownerEmail?:string|null;deviceCount:number;onlineDeviceCount:number;securityMode:string;}
+export interface AdminResidentSummary {id:string;name:string;email:string;isHomeowner:boolean;}
+export interface AdminDeviceSummary {id:string;houseId?:string|null;estateId?:string|null;controllerId:string;name:string;type:string;capabilities:unknown[];executionMode:"SIMULATED"|"PHYSICAL";connectivity:DeviceState["connectivity"]|null;reported:Record<string,unknown>|null;desired:Record<string,unknown>|null;commandStatus:string|null;lastReportedAt?:string|null;}
+export interface AdminControllerSummary {id:string;name:string;gatewayId:string;registrationState:string;pairingState:string;networkState:string;mqttState:string;wifiSsid?:string|null;wifiRssi?:number|null;firmwareVersion?:string|null;lastHeartbeatAt?:string|null;lastSeenAt?:string|null;hardwareReadiness?:Record<string,unknown>|null;uptimeSeconds?:number|null;}
+export interface AdminActivityItem {id:string;deviceId:string;deviceName?:string;type:string;status?:string;severity?:string;houseId?:string|null;requestedAt?:string;occurredAt?:string;completedAt?:string|null;error?:string|null;requestedByName?:string|null;}
+export interface AdminOverviewResponse {estates:Estate[];estate:Estate;houses:AdminHouseSummary[];residents:AdminResidentSummary[];devices:AdminDeviceSummary[];controllers:AdminControllerSummary[];commands:AdminActivityItem[];securityEvents:AdminActivityItem[];}
 
 export interface DevelopmentOnboardingResponse {
   houseId: string;

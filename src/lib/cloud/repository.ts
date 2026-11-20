@@ -20,45 +20,75 @@ export async function profile(user: User) {
   return row ? { id: row.id, name: row.display_name, email: row.email, role } : { id: user.id, name: user.email.split("@")[0], email: user.email, role };
 }
 
+export async function adminOverview(userId: string, requestedEstateId?: string | null) {
+  const sql = getSql();
+  const estates = await sql`select e.id,e.name,e.timezone from smart_estate.estate e join smart_estate.estate_admin a on a.estate_id=e.id where a.user_id=${userId}::uuid and a.active order by e.name`;
+  const estate = requestedEstateId ? estates.find((item) => item.id === requestedEstateId) : estates[0];
+  if (!estate) return null;
+  const [houses, residents,devices, controllers, commands, securityEvents] = await Promise.all([
+    sql`select h.id,h.name,h.timezone,p.id "ownerId",p.display_name "ownerName",p.email "ownerEmail",coalesce(ds.devices,0)::int "deviceCount",coalesce(ds.online,0)::int "onlineDeviceCount",coalesce(ss.mode,'DISARMED') "securityMode" from smart_estate.house h left join smart_estate.profile p on p.id=h.owner_id left join smart_estate.house_security_state ss on ss.house_id=h.id left join lateral(select count(*) devices,count(*) filter(where s.connectivity='ONLINE') online from smart_estate.device d left join smart_estate.device_state s on s.device_id=d.id where d.house_id=h.id) ds on true where h.estate_id=${estate.id} order by h.name`,
+    sql`select distinct p.id,p.display_name "name",p.email,exists(select 1 from smart_estate.house h where h.estate_id=${estate.id} and h.owner_id=p.id) "isHomeowner" from smart_estate.profile p where exists(select 1 from smart_estate.estate_member m where m.estate_id=${estate.id} and m.user_id=p.id and m.active) or exists(select 1 from smart_estate.house h where h.estate_id=${estate.id} and h.owner_id=p.id) order by p.display_name`,
+    sql`select d.id,d.house_id "houseId",d.estate_id "estateId",d.controller_id "controllerId",d.name,d.type,d.capabilities,d.execution_mode "executionMode",s.connectivity,s.reported,s.desired,s.command_status "commandStatus",s.last_reported_at "lastReportedAt" from smart_estate.device d left join smart_estate.device_state s on s.device_id=d.id left join smart_estate.house h on h.id=d.house_id where d.estate_id=${estate.id} or h.estate_id=${estate.id} order by d.name`,
+    sql`select c.id,c.name,c.gateway_id "gatewayId",c.registration_state "registrationState",c.pairing_state "pairingState",c.network_state "networkState",c.mqtt_state "mqttState",c.wifi_ssid "wifiSsid",c.wifi_rssi "wifiRssi",c.firmware_version "firmwareVersion",c.last_heartbeat_at "lastHeartbeatAt",c.last_seen_at "lastSeenAt",c.hardware_readiness "hardwareReadiness",c.uptime_seconds "uptimeSeconds" from smart_estate.controller c where c.estate_id=${estate.id} and c.revoked_at is null order by c.name`,
+    sql`select c.id,c.device_id "deviceId",d.name "deviceName",c.type,c.status,c.requested_at "requestedAt",c.completed_at "completedAt",c.error,p.display_name "requestedByName" from smart_estate.device_command c join smart_estate.device d on d.id=c.device_id left join smart_estate.house h on h.id=d.house_id left join smart_estate.profile p on p.id=c.requested_by where d.estate_id=${estate.id} or h.estate_id=${estate.id} order by c.requested_at desc limit 20`,
+    sql`select e.id,e.house_id "houseId",e.device_id "deviceId",e.type,e.severity,e.occurred_at "occurredAt" from smart_estate.security_event e join smart_estate.house h on h.id=e.house_id where h.estate_id=${estate.id} union all select e.id,null "houseId",e.device_id "deviceId",e.type,e.severity,e.occurred_at "occurredAt" from smart_estate.estate_security_event e where e.estate_id=${estate.id} order by "occurredAt" desc limit 20`,
+  ]);
+  return { estates, estate, houses, residents,devices, controllers, commands, securityEvents };
+}
+
+export async function assignHouseOwner(userId:string,houseId:string,newOwnerId:string){
+  const sql=getSql();
+  return sql.begin(async tx=>{
+    const rows=await tx`select h.id,h.estate_id,h.owner_id from smart_estate.house h where h.id=${houseId} and exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${userId}::uuid and a.active) for update`;
+    const house=rows[0];if(!house)return null;
+    const eligible=await tx`select exists(select 1 from smart_estate.profile p where p.id=${newOwnerId}::uuid and (exists(select 1 from smart_estate.estate_member m where m.estate_id=${house.estate_id} and m.user_id=p.id and m.active) or exists(select 1 from smart_estate.house_access x join smart_estate.house h on h.id=x.house_id where h.estate_id=${house.estate_id} and x.user_id=p.id and x.active))) allowed`;
+    if(!eligible[0]?.allowed)throw new CommandSubmissionError("INVALID_COMMAND","The selected resident is not eligible in this estate");
+    await tx`update smart_estate.house set owner_id=${newOwnerId}::uuid where id=${houseId}`;
+    await tx`delete from smart_estate.house_access where house_id=${houseId} and user_id=${newOwnerId}::uuid`;
+    await tx`insert into smart_estate.audit_record(id,actor_id,house_id,estate_id,action,resource_type,resource_id,details) values(${randomUUID()}::uuid,${userId}::uuid,${houseId},${house.estate_id},'HOUSE_OWNER_REASSIGNED','house',${houseId},${tx.json({previousOwnerId:house.owner_id,newOwnerId})})`;
+    return {houseId,ownerId:newOwnerId};
+  });
+}
+
 export async function houses(userId: string) {
   const sql = getSql();
-  return sql`select h.id,h.name,h.timezone from smart_estate.house h where smart_estate.can_view_house(${userId}::uuid,h.id) order by h.name`;
+  return sql`select h.id,h.name,h.timezone from smart_estate.house h where smart_estate.can_view_house(${userId}::uuid,h.id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${userId}::uuid and a.active) order by h.name`;
 }
 
 export async function estateDevices(userId: string, estateId: string) {
   const sql = getSql();
-  const rows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type) can_command from smart_estate.device d where d.estate_id=${estateId} and d.house_id is null and smart_estate.can_view_estate(${userId}::uuid,d.estate_id) order by d.name`;
+  const rows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${userId}::uuid and a.active) can_command from smart_estate.device d where d.estate_id=${estateId} and d.house_id is null and (smart_estate.can_view_estate(${userId}::uuid,d.estate_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${userId}::uuid and a.active)) order by d.name`;
   return rows.map((row) => ({ id: row.id, houseId: row.house_id, estateId: row.estate_id, roomId: row.room_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_command ? ["VIEW", "READ_STATE", "COMMAND"] : ["VIEW", "READ_STATE"] }));
 }
 
 export async function rooms(userId: string, houseId: string) {
   const sql = getSql();
-  return sql`select r.id, r.house_id as "houseId", r.name from smart_estate.room r where r.house_id=${houseId} and smart_estate.can_view_house(${userId}::uuid,r.house_id) order by r.name`;
+  return sql`select r.id, r.house_id as "houseId", r.name from smart_estate.room r join smart_estate.house h on h.id=r.house_id where r.house_id=${houseId} and (smart_estate.can_view_house(${userId}::uuid,r.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${userId}::uuid and a.active)) order by r.name`;
 }
 
 export async function devices(userId: string, houseId: string) {
   const sql = getSql();
-  const rows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,smart_estate.can_control_house(${userId}::uuid,d.house_id) can_command from smart_estate.device d where d.house_id=${houseId} and smart_estate.can_view_house(${userId}::uuid,d.house_id) order by d.name`;
+  const rows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,(smart_estate.can_control_house(${userId}::uuid,d.house_id) or exists(select 1 from smart_estate.estate_admin a join smart_estate.house h on h.estate_id=a.estate_id where h.id=d.house_id and a.user_id=${userId}::uuid and a.active)) can_command from smart_estate.device d where d.house_id=${houseId} and (smart_estate.can_view_house(${userId}::uuid,d.house_id) or exists(select 1 from smart_estate.estate_admin a join smart_estate.house h on h.estate_id=a.estate_id where h.id=d.house_id and a.user_id=${userId}::uuid and a.active)) order by d.name`;
   return rows.map((row) => ({ id: row.id, houseId: row.house_id, estateId: row.estate_id, roomId: row.room_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_command ? ["VIEW", "READ_STATE", "COMMAND"] : ["VIEW", "READ_STATE"] }));
 }
 
 export async function authorizedDevice(userId: string, deviceId: string): Promise<Device | null> {
   const sql = getSql();
-  const rows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,case when d.house_id is not null then smart_estate.can_control_house(${userId}::uuid,d.house_id) else smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type) end can_command from smart_estate.device d where d.id=${deviceId} and ((d.house_id is not null and smart_estate.can_view_house(${userId}::uuid,d.house_id)) or (d.estate_id is not null and smart_estate.can_view_estate(${userId}::uuid,d.estate_id))) limit 1`;
+  const rows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,case when d.house_id is not null then smart_estate.can_control_house(${userId}::uuid,d.house_id) or exists(select 1 from smart_estate.estate_admin a join smart_estate.house h on h.estate_id=a.estate_id where h.id=d.house_id and a.user_id=${userId}::uuid and a.active) else smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${userId}::uuid and a.active) end can_command from smart_estate.device d left join smart_estate.house h on h.id=d.house_id where d.id=${deviceId} and ((d.house_id is not null and (smart_estate.can_view_house(${userId}::uuid,d.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${userId}::uuid and a.active))) or (d.estate_id is not null and (smart_estate.can_view_estate(${userId}::uuid,d.estate_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${userId}::uuid and a.active)))) limit 1`;
   const row = rows[0];
   return row ? { id: row.id, houseId: row.house_id, estateId: row.estate_id, roomId: row.room_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_command ? ["VIEW", "READ_STATE", "COMMAND"] : ["VIEW", "READ_STATE"] } as Device : null;
 }
 
 export async function deviceState(userId: string, deviceId: string) {
   const sql = getSql();
-  const rows = await sql`select s.device_id,s.connectivity,s.desired,s.reported,s.command_status,s.last_reported_at from smart_estate.device_state s join smart_estate.device d on d.id=s.device_id where s.device_id=${deviceId} and ((d.house_id is not null and smart_estate.can_view_house(${userId}::uuid,d.house_id)) or (d.estate_id is not null and smart_estate.can_view_estate(${userId}::uuid,d.estate_id)))`;
+  const rows = await sql`select s.device_id,s.connectivity,s.desired,s.reported,s.command_status,s.last_reported_at from smart_estate.device_state s join smart_estate.device d on d.id=s.device_id left join smart_estate.house h on h.id=d.house_id where s.device_id=${deviceId} and ((d.house_id is not null and (smart_estate.can_view_house(${userId}::uuid,d.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${userId}::uuid and a.active))) or (d.estate_id is not null and (smart_estate.can_view_estate(${userId}::uuid,d.estate_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${userId}::uuid and a.active))))`;
   const row = rows[0]; if (!row) return null;
   return { deviceId: row.device_id, connectivity: row.connectivity, desired: row.desired, reported: row.reported, commandStatus: row.command_status, lastReportedAt: row.last_reported_at };
 }
 
 export async function dashboard(userId: string, houseId: string) {
   const sql = getSql();
-  const rows = await sql`select ${houseId}::text "houseId",count(d.id)::int "totalDevices",count(d.id) filter(where s.connectivity='ONLINE')::int "onlineDevices",0::int "activeAutomations",coalesce(m.mode,'DISARMED') "securityMode",0::numeric "energyTodayKwh" from smart_estate.house h left join smart_estate.device d on d.house_id=h.id left join smart_estate.device_state s on s.device_id=d.id left join smart_estate.house_security_state m on m.house_id=h.id where h.id=${houseId} and smart_estate.can_view_house(${userId}::uuid,h.id) group by m.mode`;
+  const rows = await sql`select ${houseId}::text "houseId",count(d.id)::int "totalDevices",count(d.id) filter(where s.connectivity='ONLINE')::int "onlineDevices",0::int "activeAutomations",coalesce(m.mode,'DISARMED') "securityMode",0::numeric "energyTodayKwh" from smart_estate.house h left join smart_estate.device d on d.house_id=h.id left join smart_estate.device_state s on s.device_id=d.id left join smart_estate.house_security_state m on m.house_id=h.id where h.id=${houseId} and (smart_estate.can_view_house(${userId}::uuid,h.id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${userId}::uuid and a.active)) group by m.mode`;
   return rows[0] ?? null;
 }
 
@@ -69,7 +99,7 @@ export async function submitCommand(userId: string, deviceId: string, body: Reco
   if (!commandTypes.has(type) || !requestId || requestId.length > 120) throw new CommandSubmissionError("INVALID_COMMAND", "A valid command and request ID are required");
   const parameters = body.parameters && typeof body.parameters === "object" ? body.parameters : null;
   const rows = await sql.begin(async (tx) => {
-    const allowed = await tx`select d.id,d.gateway_id,d.type,d.house_id,d.estate_id,d.room_id,d.name,d.capabilities,d.execution_mode,s.connectivity from smart_estate.device d left join smart_estate.device_state s on s.device_id=d.id where d.id=${deviceId} and d.gateway_id is not null and ((d.house_id is not null and smart_estate.can_control_house(${userId}::uuid,d.house_id)) or (d.estate_id is not null and smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type))) for update of d`;
+    const allowed = await tx`select d.id,d.gateway_id,d.type,d.house_id,d.estate_id,d.room_id,d.name,d.capabilities,d.execution_mode,s.connectivity from smart_estate.device d left join smart_estate.device_state s on s.device_id=d.id left join smart_estate.house h on h.id=d.house_id where d.id=${deviceId} and d.gateway_id is not null and ((d.house_id is not null and (smart_estate.can_control_house(${userId}::uuid,d.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${userId}::uuid and a.active))) or (d.estate_id is not null and (smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${userId}::uuid and a.active)))) for update of d`;
     if (!allowed[0]) return [];
     const record = allowed[0];
     const device = { id: record.id, houseId: record.house_id, estateId: record.estate_id, roomId: record.room_id, name: record.name, type: record.type, capabilities: record.capabilities, executionMode: record.execution_mode, allowedOperations: ["VIEW", "READ_STATE", "COMMAND"] } as Device;

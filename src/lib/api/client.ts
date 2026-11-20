@@ -11,6 +11,7 @@ import type {
   UserResponse,
   ControllerSummary,
   SecurityEventPage,
+  AdminOverviewResponse,
 } from "./contracts.ts";
 import type { Device, DeviceCommand, DeviceState, Estate, GateResource, House, HouseSecurityMode, Room, SecurityEvent, SecuritySensorPolicy } from "../../domain/smart-estate.ts";
 
@@ -57,6 +58,8 @@ export class SmartEstateApiClient {
   houses = () => this.request<House[]>("/houses");
   estates = () => this.request<Estate[]>("/estates");
   controllers=(estateId:string)=>this.request<ControllerSummary[]>(`/controllers?estateId=${encodeURIComponent(estateId)}`);
+  adminOverview=(estateId?:string)=>this.request<AdminOverviewResponse>(`/admin/overview${estateId?`?estateId=${encodeURIComponent(estateId)}`:""}`);
+  assignHouseOwner=(houseId:string,ownerId:string)=>this.mutate<{houseId:string;ownerId:string}>(`/admin/houses/${encodeURIComponent(houseId)}/owner`,{ownerId},"PUT");
   gate = (estateId: string) => this.request<GateResource>(`/estates/${estateId}/gate`);
   estateDevices = (estateId: string) => this.request<Device[]>(`/estates/${estateId}/devices`);
   rooms = (houseId: string) => this.request<Room[]>(`/houses/${houseId}/rooms`);
