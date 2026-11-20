@@ -101,3 +101,35 @@ export async function revokeController(userId: string, controllerId: string) {
   });
   return { controllerId, revoked: true, brokerRevocation: "PENDING" };
 }
+
+export async function provisioningStatus(userId: string, controllerId: string) {
+  const sql=getSql();
+  const controller=await sql`select estate_id from smart_estate.controller where id=${controllerId}`;
+  if(!controller[0])throw new ControllerAuthorizationError("Controller not found");
+  await requireEstateAdmin(userId,controller[0].estate_id);
+  const rows=await sql`select id,sequence,operation,status,duration_seconds "durationSeconds",expires_at "expiresAt",published_at "publishedAt",acknowledged_at "acknowledgedAt",acknowledgement,error,created_at "createdAt",updated_at "updatedAt" from smart_estate.controller_provisioning_request where controller_id=${controllerId} order by sequence desc limit 20`;
+  return {controllerId,requests:rows};
+}
+
+export async function requestProvisioning(userId:string,controllerId:string,durationSeconds:number){
+  if(!Number.isInteger(durationSeconds)||durationSeconds<60||durationSeconds>600)throw new ControllerConflictError("Provisioning duration must be between 60 and 600 seconds");
+  const sql=getSql();const controller=await sql`select estate_id,gateway_id,registration_state,revoked_at from smart_estate.controller where id=${controllerId}`;
+  if(!controller[0]||controller[0].revoked_at)throw new ControllerConflictError("Controller is unavailable");
+  await requireEstateAdmin(userId,controller[0].estate_id);
+  const id=randomUUID();
+  const rows=await sql.begin(async tx=>{
+    await tx`update smart_estate.controller_provisioning_request set status='CANCELLED',error='Superseded by a newer administrator request',updated_at=now() where controller_id=${controllerId} and status in ('PENDING','CLAIMED','PUBLISHED')`;
+    return tx`insert into smart_estate.controller_provisioning_request(id,controller_id,estate_id,gateway_id,requested_by,operation,duration_seconds,expires_at) values(${id}::uuid,${controllerId},${controller[0].estate_id},${controller[0].gateway_id},${userId}::uuid,'OPEN_PROVISIONING_WINDOW',${durationSeconds},now()+interval '10 minutes') returning id,sequence,operation,status,duration_seconds "durationSeconds",expires_at "expiresAt",created_at "createdAt"`;
+  });
+  return rows[0];
+}
+
+export async function cancelProvisioning(userId:string,controllerId:string){
+  const sql=getSql();const controller=await sql`select estate_id,gateway_id,revoked_at from smart_estate.controller where id=${controllerId}`;
+  if(!controller[0]||controller[0].revoked_at)throw new ControllerConflictError("Controller is unavailable");
+  await requireEstateAdmin(userId,controller[0].estate_id);const id=randomUUID();
+  const rows=await sql.begin(async tx=>{
+    await tx`update smart_estate.controller_provisioning_request set status='CANCELLED',error='Cancelled by estate administrator',updated_at=now() where controller_id=${controllerId} and status in ('PENDING','CLAIMED','PUBLISHED')`;
+    return tx`insert into smart_estate.controller_provisioning_request(id,controller_id,estate_id,gateway_id,requested_by,operation,duration_seconds,expires_at) values(${id}::uuid,${controllerId},${controller[0].estate_id},${controller[0].gateway_id},${userId}::uuid,'CLOSE_PROVISIONING_WINDOW',60,now()+interval '2 minutes') returning id,sequence,operation,status,expires_at "expiresAt",created_at "createdAt"`;
+  });return rows[0];
+}

@@ -39,3 +39,9 @@ export type BridgeSync = {
   securityModes: SecurityMode[];
   revokedControllerIds: string[];
 };
+
+export type ProvisioningRequest = {
+  commandId:string;leaseId:string;controllerId:string;sequence:number;
+  type:"OPEN_PROVISIONING_WINDOW"|"CLOSE_PROVISIONING_WINDOW";
+  parameters:{durationSeconds:number};issuedAt:string;expiresAt:string;
+};

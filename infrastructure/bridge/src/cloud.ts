@@ -1,4 +1,4 @@
-import type { BridgeSync, CloudCommand, CloudEvent } from "./types.js";
+import type { BridgeSync, CloudCommand, CloudEvent, ProvisioningRequest } from "./types.js";
 
 export class CloudClient {
   constructor(private readonly baseUrl: string, private readonly gatewayId: string, private readonly credential: string) {}
@@ -32,4 +32,7 @@ export class CloudClient {
   async sync() {
     return await this.request<BridgeSync>("/api/iot/v1/bridge/sync");
   }
+  async claimProvisioning(){return (await this.request<{requests:ProvisioningRequest[]}>("/api/iot/v1/provisioning?limit=10")).requests;}
+  async confirmProvisioning(commandId:string,leaseId:string){return this.request<{confirmed:true}>("/api/iot/v1/provisioning",{method:"POST",body:JSON.stringify({commandId,leaseId})});}
+  async provisioningAck(controllerId:string,body:Record<string,unknown>){return this.request<{accepted:boolean}>(`/api/iot/v1/controllers/${encodeURIComponent(controllerId)}/provisioning-ack`,{method:"POST",body:JSON.stringify(body)});}
 }

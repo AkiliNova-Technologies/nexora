@@ -58,3 +58,10 @@ test("event queue fails closed at its configured capacity", () => {
   store.close();
   rmSync(directory, { recursive: true });
 });
+
+test("provisioning delivery survives bridge restart without changing sequence",()=>{
+  const directory=mkdtempSync(join(tmpdir(),"nexora-bridge-"));const path=join(directory,"queue.sqlite");
+  const request={commandId:"11111111-1111-4111-8111-111111111111",leaseId:"22222222-2222-4222-8222-222222222222",controllerId:"controller-1",sequence:42,type:"OPEN_PROVISIONING_WINDOW" as const,parameters:{durationSeconds:300},issuedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+60_000).toISOString()};
+  const first=new BridgeStore(path,100);first.recordProvisioning(request);first.close();
+  const second=new BridgeStore(path,100);assert.deepEqual(second.pendingProvisioning(),[request]);second.setProvisioningState(request.commandId,"PUBLISHED");assert.equal(second.pendingProvisioning().length,0);second.close();rmSync(directory,{recursive:true});
+});

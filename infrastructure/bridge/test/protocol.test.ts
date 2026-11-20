@@ -22,3 +22,10 @@ test("rejects cross-controller and malformed topics", () => {
 test("rejects oversized payloads", () => {
   assert.throws(() => parseInbound("smartestate/v1/house-1/light-1/state", Buffer.alloc(4097), sync, 4096), /payload_too_large/);
 });
+
+test("accepts only controller-specific provisioning acknowledgements",()=>{
+  const body={commandId:"11111111-1111-4111-8111-111111111111",status:"ACCEPTED"};
+  const parsed=parseInbound("smartestate/v1/controllers/controller-1/provisioning/ack",Buffer.from(JSON.stringify(body)),sync,4096);
+  assert.equal(parsed.type,"provisioningAck");
+  assert.throws(()=>parseInbound("smartestate/v1/controllers/controller-2/provisioning/ack",Buffer.from(JSON.stringify(body)),sync,4096),/unregistered/);
+});

@@ -7,6 +7,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Bell, Cloud, CloudOff, Search } from "lucide-react";
 import { useSmartEstate } from "@/components/providers/device-state-provider";
 import { Avatar, AvatarFallback } from "./ui/avatar";
+import { Select,SelectContent,SelectItem,SelectTrigger,SelectValue } from "@/components/ui/select";
 
 const pageMeta: Record<string, { title: string; description: string }> = {
   "/dashboard": {
@@ -91,7 +92,7 @@ export function SiteHeader() {
         </div>
 
         <div className="flex items-center gap-2">
-          {houses.length > 1 && <label className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex"><span>House</span><select aria-label="Select house" value={currentHouse?.id ?? ""} onChange={(event)=>selectHouse(event.target.value)} className="h-9 max-w-44 rounded-xl border border-white/10 bg-[#111827] px-3 text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><option value="" disabled>Select a house</option>{houses.map(house=><option key={house.id} value={house.id}>{house.name}</option>)}</select></label>}
+          {houses.length > 1 && <div className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex"><span>House</span><Select value={currentHouse?.id} onValueChange={selectHouse}><SelectTrigger aria-label="Select house" className="h-9 w-44 border-white/10 bg-[#111827]"><SelectValue placeholder="Select a house"/></SelectTrigger><SelectContent>{houses.map(house=><SelectItem key={house.id} value={house.id}>{house.name}</SelectItem>)}</SelectContent></Select></div>}
           <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-muted-foreground sm:flex">
             {eventStatus === "live" ? <Cloud className="size-4 text-green-400" /> : <CloudOff className="size-4 text-amber-400" />}
             {eventStatus === "live" ? "Cloud connected" : eventStatus === "reconnecting" ? "Cloud reconnecting" : "Cloud status unknown"}

@@ -3,7 +3,7 @@ import { CloudClient } from "./cloud.js";
 import { commandTopic, parseInbound } from "./protocol.js";
 import { publishQos1, subscribeQos1 } from "./broker.js";
 import { BridgeStore } from "./store.js";
-import type { BridgeSync, CloudCommand } from "./types.js";
+import type { BridgeSync, CloudCommand, ProvisioningRequest } from "./types.js";
 import { log } from "./log.js";
 
 export class Bridge {
@@ -38,6 +38,7 @@ export class Bridge {
         this.store.cleanup(this.retentionDays);
         await this.flushEvents();
         if (this.brokerHealthy) await this.pollCommands();
+        if (this.brokerHealthy) await this.pollProvisioning();
         this.cloudHealthy = true;
         this.backoffMs = 0;
       } catch (error) {
@@ -63,6 +64,7 @@ export class Bridge {
   private async subscribe() {
     const topics = this.syncState.controllers.flatMap((controller) => [
       `smartestate/v1/controllers/${controller.controllerId}/heartbeat`,
+      `smartestate/v1/controllers/${controller.controllerId}/provisioning/ack`,
       ...controller.devices.flatMap((device) => ["ack", "state", "status", "event"].map((kind) => `smartestate/v1/${device.scopeId}/${device.deviceId}/${kind}`)),
     ]);
     if (topics.length) await subscribeQos1(this.mqtt, topics);
@@ -90,7 +92,10 @@ export class Bridge {
           }
         }
       }
-      else {
+      else if(parsed.type==="provisioningAck"){
+        await this.cloud.provisioningAck(parsed.controllerId,parsed.body);
+        if(parsed.body.status!=="ACCEPTED")this.store.setProvisioningState(String(parsed.body.commandId),"TERMINAL");
+      } else {
         this.store.enqueueEvent(parsed.event);
         if (parsed.event.kind === "ack" && typeof parsed.event.body.commandId === "string" && ["EXECUTED", "FAILED", "TIMEOUT"].includes(String(parsed.event.body.status))) this.store.setDeliveryState(parsed.event.body.commandId, "TERMINAL");
       }
@@ -129,6 +134,18 @@ export class Bridge {
       this.store.recordClaim(command);
       await this.confirmAndDeliver(command);
     }
+  }
+
+  private async pollProvisioning(){
+    for(const request of this.store.pendingProvisioning())await this.deliverProvisioning(request);
+    for(const request of await this.cloud.claimProvisioning()){this.store.recordProvisioning(request);await this.deliverProvisioning(request);}
+  }
+  private async deliverProvisioning(request:ProvisioningRequest){
+    if(Date.parse(request.expiresAt)<=Date.now()||!this.syncState.controllers.some(item=>item.controllerId===request.controllerId))return;
+    const state=this.store.provisioningState(request.commandId);if(!state||state.state!=="CLAIMED")return;
+    await this.cloud.confirmProvisioning(request.commandId,request.leaseId);
+    await publishQos1(this.mqtt,`smartestate/v1/controllers/${request.controllerId}/provisioning`,JSON.stringify(request));
+    this.store.setProvisioningState(request.commandId,"PUBLISHED");
   }
 
   private registrationFor(command: CloudCommand) {
