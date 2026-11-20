@@ -89,7 +89,7 @@ export class SmartEstateApiClient {
       return this.request<T>(path, {
         method,
         headers: this.csrfToken ? { "X-XSRF-TOKEN": this.csrfToken } : undefined,
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: JSON.stringify(body === undefined ? {} : body),
       });
     };
     try {
