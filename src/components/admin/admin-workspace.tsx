@@ -33,7 +33,67 @@ function Panel({title,children}:{title:string;children:React.ReactNode}){return 
 function HouseGrid({data}:{data:AdminOverviewResponse}){return <section className="grid gap-4 md:grid-cols-2">{data.houses.map(h=><article key={h.id} className="rounded-3xl border border-white/10 bg-card/80 p-5"><div className="flex items-start justify-between"><div className="flex size-11 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400"><House className="size-5"/></div><Badge variant="outline" className="border-white/10">{h.securityMode.replaceAll("_"," ")}</Badge></div><h2 className="mt-5 text-lg font-semibold text-white">{h.name}</h2><p className="mt-1 text-sm text-muted-foreground">{h.ownerName??h.ownerEmail??"Unassigned"}</p><div className="mt-4 flex gap-4 text-sm"><span className="text-green-400">{h.onlineDeviceCount} online</span><span className="text-muted-foreground">{h.deviceCount} devices</span></div><Button asChild variant="outline" className="mt-5 w-full border-white/10"><Link href={`/admin/houses/${h.id}`}>Manage house</Link></Button></article>)}</section>}
 function Residents({data}:{data:AdminOverviewResponse}){return <Panel title="Homeowner assignments"><div className="divide-y divide-white/10">{data.houses.map(h=><ResidentAssignment key={h.id} house={h} residents={data.residents}/>)}</div><p className="mt-4 text-xs text-muted-foreground">Only profiles already associated with this estate are listed. Reassignment is transactional, removes redundant access for the new owner, and records an audit entry. Authentication accounts are never deleted.</p></Panel>}
 function ResidentAssignment({house,residents}:{house:AdminOverviewResponse["houses"][number];residents:AdminOverviewResponse["residents"]}){const [ownerId,setOwnerId]=React.useState(house.ownerId??"");const [busy,setBusy]=React.useState(false);const [message,setMessage]=React.useState<string|null>(null);const changed=ownerId&&ownerId!==house.ownerId;return <div className="grid gap-3 py-4 text-sm md:grid-cols-[1fr_1.4fr_auto] md:items-center"><div><p className="font-medium text-white">{house.name}</p><p className="text-muted-foreground">Current: {house.ownerName??house.ownerEmail??"Unassigned"}</p></div><select aria-label={`Homeowner for ${house.name}`} value={ownerId} onChange={event=>{setOwnerId(event.target.value);setMessage(null);}} className="h-10 rounded-xl border border-white/10 bg-[#111827] px-3 text-white"><option value="" disabled>Select an eligible resident</option>{residents.map(resident=><option key={resident.id} value={resident.id}>{resident.name} · {resident.email}</option>)}</select><Button disabled={!changed||busy} onClick={()=>{setBusy(true);setMessage(null);void smartEstateApi.assignHouseOwner(house.id,ownerId).then(()=>{setMessage("Assignment saved");window.location.reload();}).catch(cause=>setMessage(cause instanceof Error?cause.message:"Assignment failed")).finally(()=>setBusy(false));}}>{busy?"Saving…":"Reassign"}</Button>{message&&<p role="status" className="text-xs text-muted-foreground md:col-start-2 md:col-span-2">{message}</p>}</div>}
-function DeviceTable({devices,houses}:{devices:AdminOverviewResponse["devices"];houses:AdminOverviewResponse["houses"]}){return <Panel title={`${devices.length} registered devices`}><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="text-muted-foreground"><tr><th className="pb-3">Device</th><th>Scope</th><th>Type</th><th>Controller</th><th>Connectivity</th><th>Command</th><th>Last reported</th></tr></thead><tbody className="divide-y divide-white/10">{devices.map(d=><tr key={d.id}><td className="py-4"><p className="font-medium text-white">{d.name}</p><p className="text-xs text-muted-foreground">{d.id}</p></td><td>{d.houseId?houses.find(h=>h.id===d.houseId)?.name:"Shared estate"}</td><td>{d.type}</td><td className="text-xs">{d.controllerId}</td><td><Status value={d.connectivity??"UNKNOWN"}/></td><td>{d.commandStatus??"IDLE"}</td><td className="text-xs text-muted-foreground">{d.lastReportedAt?new Date(d.lastReportedAt).toLocaleString():"Never"}</td></tr>)}</tbody></table></div></Panel>}
+function DeviceTable({devices,houses}:{devices:AdminOverviewResponse["devices"];houses:AdminOverviewResponse["houses"]}){return <Panel title={`${devices.length} registered devices`}><div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-sm"><thead className="text-muted-foreground"><tr><th className="pb-3">Device</th><th>Scope</th><th>Type</th><th>Controller</th><th>Connectivity</th><th>Command</th><th>Last reported</th><th>Control</th></tr></thead><tbody className="divide-y divide-white/10">{devices.map(d=><tr key={d.id}><td className="py-4"><p className="font-medium text-white">{d.name}</p><p className="text-xs text-muted-foreground">{d.id}</p></td><td>{d.houseId?houses.find(h=>h.id===d.houseId)?.name:"Shared estate"}</td><td>{d.type}</td><td className="text-xs">{d.controllerId}</td><td><Status value={d.connectivity??"UNKNOWN"}/></td><td>{d.commandStatus??"IDLE"}</td><td className="text-xs text-muted-foreground">{d.lastReportedAt?new Date(d.lastReportedAt).toLocaleString():"Never"}</td><td><PowerControls device={d}/></td></tr>)}</tbody></table></div></Panel>}
+
+function PowerControls({device}:{device:AdminOverviewResponse["devices"][number]}){
+  const [busy,setBusy]=React.useState(false);
+  const [message,setMessage]=React.useState<string|null>(null);
+  const [reported,setReported]=React.useState<boolean|undefined>(typeof device.reported?.on==="boolean"?device.reported.on:undefined);
+  const [connectivity,setConnectivity]=React.useState(device.connectivity);
+  const lock=React.useRef(false);
+  const mounted=React.useRef(true);
+  React.useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
+  const supported=(device.type==="LIGHT"&&!!device.houseId)||device.type==="FAN";
+  const [stale,setStale]=React.useState(false);
+  React.useEffect(()=>{
+    if(!supported)return;
+    let active=true;
+    let timer:ReturnType<typeof setTimeout>;
+    const refresh=async()=>{
+      if(!lock.current){
+        lock.current=true;
+        try{
+          const state=await smartEstateApi.state(device.id);
+          if(active){setReported(state.reported.on);setConnectivity(state.connectivity);setStale(false);}
+        }catch{if(active)setStale(true);}
+        finally{lock.current=false;}
+      }
+      if(active)timer=setTimeout(refresh,5000);
+    };
+    timer=setTimeout(refresh,5000);
+    return()=>{active=false;clearTimeout(timer);};
+  },[device.id,supported]);
+  if(!supported)return <span className="text-xs text-muted-foreground">—</span>;
+  const run=async(on:boolean)=>{
+    if(lock.current||connectivity!=="ONLINE"||stale)return;
+    lock.current=true;setBusy(true);setMessage("Checking device…");
+    try{
+      const before=await smartEstateApi.state(device.id);
+      if(!mounted.current)return;
+      setReported(before.reported.on);setConnectivity(before.connectivity);
+      if(before.connectivity!=="ONLINE")throw new Error("Device is not online");
+      if(["PENDING","SENT","ACCEPTED","ACKNOWLEDGED"].includes(before.commandStatus))throw new Error("A command is already pending");
+      const command=await smartEstateApi.command(device.id,{command:on?"TURN_ON":"TURN_OFF",clientRequestId:crypto.randomUUID()});
+      let result=command;
+      const deadline=Date.now()+30000;
+      while(!["EXECUTED","FAILED","TIMEOUT","CANCELLED","EXPIRED","REJECTED"].includes(result.status)&&Date.now()<deadline&&mounted.current){
+        setMessage("Awaiting controller…");
+        await new Promise(resolve=>setTimeout(resolve,1500));
+        if(!mounted.current)return;
+        result=await smartEstateApi.commandStatus(command.id);
+      }
+      if(!mounted.current)return;
+      setMessage(result.status==="EXECUTED"?"Executed; checking reported state":result.error??result.status);
+      const after=await smartEstateApi.state(device.id);
+      if(!mounted.current)return;
+      setReported(after.reported.on);setConnectivity(after.connectivity);
+      if(result.status==="EXECUTED")setMessage(after.reported.on===on?"Last command executed":"Executed; reported state not yet matched");
+      else if(!["FAILED","TIMEOUT","CANCELLED","EXPIRED","REJECTED"].includes(result.status))setMessage("Outcome unconfirmed; refresh before retrying");
+    }catch(error){if(mounted.current)setMessage(error instanceof Error?error.message:"Command failed");}
+    finally{lock.current=false;if(mounted.current)setBusy(false);}
+  };
+  return <div className="min-w-40 space-y-1 py-2"><p className="text-xs text-muted-foreground">Reported: {reported===undefined?"Unknown":reported?"On":"Off"}{stale?" (stale)":""}</p><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy||connectivity!=="ONLINE"||stale} onClick={()=>void run(true)}>On</Button><Button size="sm" variant="outline" disabled={busy||connectivity!=="ONLINE"||stale} onClick={()=>void run(false)}>Off</Button></div>{message&&<p role="status" className="max-w-48 text-xs text-muted-foreground">{message}</p>}</div>;
+}
 function ControllerCards({data}:{data:AdminOverviewResponse}){return <Panel title="Estate controllers"><div className="space-y-4">{data.controllers.map(c=><div key={c.id} className="rounded-2xl border border-white/10 p-4"><div className="flex justify-between gap-3"><div><p className="font-medium text-white">{c.name}</p><p className="text-xs text-muted-foreground">{c.id}</p></div><Status value={c.networkState}/></div><dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><Info label="Pairing" value={c.pairingState}/><Info label="MQTT" value={c.mqttState}/><Info label="Wi-Fi" value={c.wifiSsid??"Unavailable"}/><Info label="Signal" value={c.wifiRssi==null?"Unavailable":`${c.wifiRssi} dBm`}/><Info label="Firmware" value={c.firmwareVersion??"Unavailable"}/><Info label="Last heartbeat" value={c.lastHeartbeatAt?new Date(c.lastHeartbeatAt).toLocaleString():"Never"}/></dl></div>)}{!data.controllers.length&&<p className="text-sm text-muted-foreground">No controller is registered.</p>}</div></Panel>}
 function ActivityList({data}:{data:AdminOverviewResponse}){const items=[...data.commands.map(x=>({...x,at:x.requestedAt,label:`${x.type} · ${x.deviceName??x.deviceId}`,result:x.status})),...data.securityEvents.map(x=>({...x,at:x.occurredAt,label:x.type,result:x.severity}))].sort((a,b)=>String(b.at).localeCompare(String(a.at))).slice(0,20);return <Panel title="Recent activity"><div className="divide-y divide-white/10">{items.map(item=><div key={`${item.id}-${item.at}`} className="flex justify-between gap-4 py-3 text-sm"><div><p className="font-medium text-white">{item.label}</p><p className="text-muted-foreground">{item.result}{item.error?` · ${item.error}`:""}</p></div><time className="text-xs text-muted-foreground">{item.at?new Date(item.at).toLocaleString():""}</time></div>)}{!items.length&&<p className="text-sm text-muted-foreground">No recorded activity.</p>}</div></Panel>}
 function Security({data}:{data:AdminOverviewResponse}){return <div className="grid gap-5 xl:grid-cols-2"><Panel title="House security modes">{data.houses.map(h=><div key={h.id} className="flex justify-between border-b border-white/10 py-3 text-sm"><span className="text-white">{h.name}</span><Badge variant="outline">{h.securityMode.replaceAll("_"," ")}</Badge></div>)}</Panel><ActivityList data={{...data,commands:[]}}/></div>}
