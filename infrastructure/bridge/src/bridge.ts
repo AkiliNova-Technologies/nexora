@@ -8,6 +8,7 @@ import { log } from "./log.js";
 
 export class Bridge {
   private running = false;
+  private hasSynced = false;
   private syncState: BridgeSync = { controllers: [], securityModes: [], revokedControllerIds: [] };
   private cloudHealthy = false;
   private brokerHealthy = false;
@@ -62,6 +63,7 @@ export class Bridge {
   private async refreshSync() {
     const next = await this.cloud.sync();
     this.syncState = next;
+    this.hasSynced = true;
     if (this.brokerHealthy) await this.subscribe();
     for (const mode of next.securityModes) {
       if (Date.parse(mode.expiresAt) <= Date.now() || mode.version <= this.store.checkpointVersion(mode.controllerId, mode.scopeId)) continue;
@@ -114,8 +116,21 @@ export class Bridge {
   }
 
   persistBeforeMqttAck(topic: string, payload: Buffer, done: (error: Error | number, code?: number) => void) {
+    // Do not discard queued messages before the initial authoritative registry sync.
+    if (!this.hasSynced) {
+      done(new Error("registry_not_ready"), 128);
+      return;
+    }
+    let parsed: ReturnType<typeof parseInbound>;
     try {
-      const parsed = parseInbound(topic, payload, this.syncState, this.maxPayloadBytes);
+      parsed = parseInbound(topic, payload, this.syncState, this.maxPayloadBytes);
+    } catch (error) {
+      // Permanently invalid messages cannot become valid through redelivery.
+      log("warn", "mqtt_invalid_message_discarded", { topic, error: error instanceof Error ? error.message : "unknown" });
+      done(0);
+      return;
+    }
+    try {
       if (parsed.type === "device") this.store.enqueueEvent(parsed.event);
       done(0);
     } catch (error) {
