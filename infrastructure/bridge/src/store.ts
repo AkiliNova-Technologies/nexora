@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CloudCommand, CloudEvent } from "./types.js";
+import type { CloudCommand, CloudEvent, ProvisioningRequest } from "./types.js";
 
 export class BridgeStore {
   readonly db: DatabaseSync;
@@ -26,6 +26,11 @@ export class BridgeStore {
       );
       CREATE TABLE IF NOT EXISTS controller_boot(
         controller_id TEXT PRIMARY KEY, boot_id TEXT NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS provisioning_delivery(
+        command_id TEXT PRIMARY KEY, controller_id TEXT NOT NULL, payload TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('CLAIMED','PUBLISHED','TERMINAL')),
+        updated_at INTEGER NOT NULL
       );
     `);
   }
@@ -66,6 +71,10 @@ export class BridgeStore {
   recoverInterrupted() {
     this.db.prepare("UPDATE command_delivery SET state='UNCERTAIN',updated_at=? WHERE state='PUBLISHING'").run(Date.now());
   }
+  recordProvisioning(request:ProvisioningRequest){this.db.prepare("INSERT OR IGNORE INTO provisioning_delivery(command_id,controller_id,payload,expires_at,state,updated_at) VALUES(?,?,?,?,?,?)").run(request.commandId,request.controllerId,JSON.stringify(request),Date.parse(request.expiresAt),"CLAIMED",Date.now());}
+  pendingProvisioning():ProvisioningRequest[]{return this.db.prepare("SELECT payload FROM provisioning_delivery WHERE state='CLAIMED' AND expires_at>? ORDER BY updated_at LIMIT 10").all(Date.now()).map(row=>JSON.parse(String((row as {payload:string}).payload)) as ProvisioningRequest);}
+  provisioningState(commandId:string){return this.db.prepare("SELECT state,expires_at FROM provisioning_delivery WHERE command_id=?").get(commandId) as {state:string;expires_at:number}|undefined;}
+  setProvisioningState(commandId:string,state:"PUBLISHED"|"TERMINAL"){this.db.prepare("UPDATE provisioning_delivery SET state=?,updated_at=? WHERE command_id=?").run(state,Date.now(),commandId);}
   checkpoint(controllerId: string, scopeId: string, version: number) {
     this.db.prepare("INSERT INTO security_checkpoint(controller_id,scope_id,version,updated_at) VALUES(?,?,?,?) ON CONFLICT(controller_id,scope_id) DO UPDATE SET version=excluded.version,updated_at=excluded.updated_at WHERE excluded.version>security_checkpoint.version")
       .run(controllerId, scopeId, version, Date.now());
@@ -80,6 +89,7 @@ export class BridgeStore {
   }
   cleanup(retentionDays: number) {
     this.db.prepare("DELETE FROM command_delivery WHERE state='TERMINAL' AND updated_at<?").run(Date.now() - retentionDays * 86400000);
+    this.db.prepare("DELETE FROM provisioning_delivery WHERE (state='TERMINAL' OR expires_at<?) AND updated_at<?").run(Date.now(),Date.now()-retentionDays*86400000);
   }
   status() {
     return {

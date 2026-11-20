@@ -60,6 +60,11 @@ export class SmartEstateApiClient {
   controllers=(estateId:string)=>this.request<ControllerSummary[]>(`/controllers?estateId=${encodeURIComponent(estateId)}`);
   adminOverview=(estateId?:string)=>this.request<AdminOverviewResponse>(`/admin/overview${estateId?`?estateId=${encodeURIComponent(estateId)}`:""}`);
   assignHouseOwner=(houseId:string,ownerId:string)=>this.mutate<{houseId:string;ownerId:string}>(`/admin/houses/${encodeURIComponent(houseId)}/owner`,{ownerId},"PUT");
+  initiateControllerPairing=(controllerId:string)=>this.mutate<{pairingId:string;challenge:string;expiresInSeconds:number}>(`/controllers/${encodeURIComponent(controllerId)}/pairing-challenges`);
+  revokeController=(controllerId:string)=>this.mutate<{controllerId:string;revoked:true}>(`/controllers/${encodeURIComponent(controllerId)}/revoke`);
+  provisioningStatus=(controllerId:string)=>this.request<{controllerId:string;requests:Array<{id:string;sequence:number;operation:string;status:string;expiresAt:string;acknowledgedAt?:string;error?:string;acknowledgement?:Record<string,unknown>}>}>(`/controllers/${encodeURIComponent(controllerId)}/provisioning`);
+  openProvisioning=(controllerId:string,durationSeconds:number)=>this.mutate(`/controllers/${encodeURIComponent(controllerId)}/provisioning`,{durationSeconds});
+  cancelProvisioning=(controllerId:string)=>this.mutate(`/controllers/${encodeURIComponent(controllerId)}/provisioning/cancel`);
   gate = (estateId: string) => this.request<GateResource>(`/estates/${estateId}/gate`);
   estateDevices = (estateId: string) => this.request<Device[]>(`/estates/${estateId}/devices`);
   rooms = (houseId: string) => this.request<Room[]>(`/houses/${houseId}/rooms`);

@@ -4,7 +4,7 @@ import { adminOverview, assignHouseOwner,CommandSubmissionError, dashboard, devi
 import { getSql } from "@/lib/cloud/db";
 import { validateMutationRequest } from "@/lib/cloud/security";
 import { diagnosticRoute, elapsedMs, logServerTiming } from "@/lib/cloud/timing";
-import { associateHouse, ControllerAuthorizationError, ControllerConflictError, controllerDetails, createPendingController, initiatePairing, listControllers, revokeController } from "@/lib/controllers/service";
+import { associateHouse, cancelProvisioning, ControllerAuthorizationError, ControllerConflictError, controllerDetails, createPendingController, initiatePairing, listControllers, provisioningStatus, requestProvisioning, revokeController } from "@/lib/controllers/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +47,7 @@ export async function GET(request: NextRequest, context: Context) {
       return NextResponse.json(await listControllers(user.id,estateId));
     }
     if (path.length === 2 && path[0] === "controllers") return NextResponse.json(await controllerDetails(user.id,path[1]));
+    if (path.length === 3 && path[0] === "controllers" && path[2] === "provisioning") return NextResponse.json(await provisioningStatus(user.id,path[1]));
     if (path.length === 3 && path[0] === "houses" && path[2] === "rooms") return NextResponse.json(await rooms(user.id, path[1]));
     if (path.length === 3 && path[0] === "houses" && path[2] === "devices") return NextResponse.json(await devices(user.id, path[1]));
     if (path.length === 3 && path[0] === "houses" && path[2] === "dashboard") { const value = await dashboard(user.id, path[1]); return value ? NextResponse.json(value) : jsonError(404, "HOUSE_NOT_FOUND", "House was not found"); }
@@ -136,6 +137,8 @@ async function mutation(request: NextRequest, context: Context) {
     if (request.method === "POST" && path.length === 3 && path[0] === "controllers" && path[2] === "pairing-challenges") return NextResponse.json(await initiatePairing(user.id,path[1]),{status:201});
     if (request.method === "POST" && path.length === 3 && path[0] === "controllers" && path[2] === "houses") return NextResponse.json(await associateHouse(user.id,path[1],String(body.houseId??"")));
     if (request.method === "POST" && path.length === 3 && path[0] === "controllers" && path[2] === "revoke") return NextResponse.json(await revokeController(user.id,path[1]));
+    if (request.method === "POST" && path.length === 3 && path[0] === "controllers" && path[2] === "provisioning") return NextResponse.json(await requestProvisioning(user.id,path[1],Number(body.durationSeconds??300)),{status:202});
+    if (request.method === "POST" && path.length === 4 && path[0] === "controllers" && path[2] === "provisioning" && path[3] === "cancel") return NextResponse.json(await cancelProvisioning(user.id,path[1]),{status:202});
     if (request.method === "PUT" && path.length === 3 && path[0] === "houses" && path[2] === "security-mode") {
       const mode = typeof body.mode === "string" && ["DISARMED","ARMED_HOME","ARMED_AWAY"].includes(body.mode) ? body.mode : null;
       const expectedVersion = Number(body.expectedVersion);

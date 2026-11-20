@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useSmartEstate } from "@/components/providers/device-state-provider";
 import { useRouter } from "next/navigation";
+import { Select,SelectContent,SelectItem,SelectTrigger,SelectValue } from "@/components/ui/select";
 
 const data = {
   user: {
@@ -94,7 +95,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarContent className="px-2 py-4">
         <NavMain items={data.navMain} />
 
-        {houses.length > 1 && <label className="mx-2 mt-4 block text-xs text-muted-foreground lg:hidden"><span className="mb-2 block">Selected house</span><select aria-label="Select house" value={currentHouse?.id ?? ""} onChange={(event)=>selectHouse(event.target.value)} className="h-10 w-full rounded-xl border border-white/10 bg-[#111827] px-3 text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><option value="" disabled>Select a house</option>{houses.map(house=><option key={house.id} value={house.id}>{house.name}</option>)}</select></label>}
+        {houses.length > 1 && <div className="mx-2 mt-4 text-xs text-muted-foreground lg:hidden"><span className="mb-2 block">Selected house</span><Select value={currentHouse?.id} onValueChange={selectHouse}><SelectTrigger aria-label="Select house" className="w-full border-white/10 bg-[#111827]"><SelectValue placeholder="Select a house"/></SelectTrigger><SelectContent>{houses.map(house=><SelectItem key={house.id} value={house.id}>{house.name}</SelectItem>)}</SelectContent></Select></div>}
 
         <div className="mx-2 mt-6 rounded-xl border border-white/10 bg-white/[0.04] p-4">
           <div className="mb-3 flex items-center justify-between">
