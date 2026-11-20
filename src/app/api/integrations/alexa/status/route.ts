@@ -8,9 +8,13 @@ export const dynamic = "force-dynamic";
 const responseHeaders = { "Cache-Control": "no-store" };
 type ConnectionRow = Record<string, unknown>;
 
+function safeDiagnostic(value: unknown): string | null {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value) ? value : null;
+}
+
 function publicStatus(localGrant: boolean, row?: ConnectionRow) {
   const state = row ? String(row.state) : localGrant ? "connection_unavailable" : "not_connected";
-  return { connected: localGrant && state === "connected" && row?.amazon_status === "ENABLED" && row?.account_link_status === "LINKED", state, localGrantActive: localGrant, amazonEnabled: row?.amazon_status === "ENABLED", amazonLinked: row?.account_link_status === "LINKED", connectedAt: row?.created_at ?? null, lastVerifiedAt: row?.last_verified_at ?? null, capabilities: ["Power control", "Device state", "Connectivity health"] };
+  return { connected: localGrant && state === "connected" && row?.amazon_status === "ENABLED" && row?.account_link_status === "LINKED", state, localGrantActive: localGrant, amazonEnabled: row?.amazon_status === "ENABLED", amazonLinked: row?.account_link_status === "LINKED", connectedAt: row?.created_at ?? null, lastVerifiedAt: row?.last_verified_at ?? null, amazonStatus: safeDiagnostic(row?.amazon_status), accountLinkStatus: safeDiagnostic(row?.account_link_status), lastErrorCode: safeDiagnostic(row?.last_error_code), capabilities: ["Power control", "Device state", "Connectivity health"] };
 }
 async function encryptedRefresh(row: ConnectionRow, userId: string, config: ReturnType<typeof appLinkConfig>) {
   if (!row.refresh_ciphertext || !row.refresh_nonce || !row.refresh_tag) throw new Error("Amazon refresh credential is unavailable");
@@ -44,8 +48,11 @@ export async function GET() {
       if (nextState === "relink_required" && row.oauth_grant_id) { await revokeAlexaGrant(String(row.oauth_grant_id)); localGrantActive = false; }
       const amazonStatus = remote.status ?? null;
       await sql`update smart_estate.alexa_connection set state=${nextState},amazon_status=${amazonStatus},account_link_status=${remote.accountLink?.status ?? null},last_verified_at=now(),last_error_code=null,updated_at=now() where id=${String(row.id)}::uuid`;
-      row.state = nextState; row.amazon_status = remote.status; row.account_link_status = remote.accountLink?.status ?? null; row.last_verified_at = new Date().toISOString();
-    } catch { if (row.state === "verification_pending") row.state = "connection_unavailable"; }
+      row.state = nextState; row.amazon_status = remote.status; row.account_link_status = remote.accountLink?.status ?? null; row.last_verified_at = new Date().toISOString(); row.last_error_code = null;
+    } catch {
+      row.last_error_code = "STATUS_VERIFICATION_FAILED";
+      if (row.state === "verification_pending") row.state = "connection_unavailable";
+    }
   }
   return Response.json(publicStatus(localGrantActive, row), { headers: responseHeaders });
 }
