@@ -13,6 +13,8 @@ export class Bridge {
   private brokerHealthy = false;
   private lastLoopAt = 0;
   private backoffMs = 0;
+  private eventUpload: Promise<void> | undefined;
+  private eventUploadHealthy: boolean | null = null;
 
   constructor(
     private readonly cloud: CloudClient,
@@ -36,7 +38,7 @@ export class Bridge {
       try {
         await this.refreshSync();
         this.store.cleanup(this.retentionDays);
-        await this.flushEvents();
+        this.scheduleEventUpload();
         if (this.brokerHealthy) await this.pollCommands();
         // Optional commissioning must not block normal device control.
         if (this.brokerHealthy && process.env.NEXORA_ENABLE_WIFI_PROVISIONING === "true") {
@@ -122,12 +124,22 @@ export class Bridge {
     }
   }
 
+  private scheduleEventUpload() {
+    if (this.eventUpload) return;
+    this.eventUpload = this.flushEvents().catch((error) => {
+      this.eventUploadHealthy = false;
+      log("warn", "event_upload_failed", { error: error instanceof Error ? error.message : "unknown" });
+    }).finally(() => { this.eventUpload = undefined; });
+  }
+
   private async flushEvents() {
-    const events = this.store.pendingEvents();
+    // The cloud processes each event in a separate database transaction.
+    const events = this.store.pendingEvents(5);
     if (!events.length) return;
     try {
       const result = await this.cloud.sendEvents(events);
       this.store.acceptEvents(result.acceptedEventIds);
+      this.eventUploadHealthy = true;
     } catch (error) {
       this.store.retryEvents(events.map((event) => event.eventId), error instanceof Error ? error.message : "unknown");
       throw error;
@@ -174,10 +186,11 @@ export class Bridge {
     }
   }
 
-  health() { return { live: this.running, ready: this.running && this.cloudHealthy && this.brokerHealthy, cloud: this.cloudHealthy, broker: this.brokerHealthy, loopAgeMs: Date.now() - this.lastLoopAt, ...this.store.status() }; }
+  health() { return { live: this.running, ready: this.running && this.cloudHealthy && this.brokerHealthy, cloud: this.cloudHealthy, eventUploadHealthy: this.eventUploadHealthy, broker: this.brokerHealthy, loopAgeMs: Date.now() - this.lastLoopAt, ...this.store.status() }; }
   async stop() {
     this.running = false;
     await new Promise<void>((resolve) => this.mqtt.end(false, {}, () => resolve()));
+    await this.eventUpload;
     this.store.close();
   }
 }
