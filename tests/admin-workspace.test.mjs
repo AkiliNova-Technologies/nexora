@@ -23,7 +23,15 @@ test("administrator pages and API are protected by active estate grants",async()
   const [layout,route,workspace]=await Promise.all([read("src/app/admin/layout.tsx"),read("src/app/api/v1/[...path]/route.ts"),read("src/components/admin/admin-workspace.tsx")]);
   assert.match(layout,/estate_admin where user_id=\$\{user\.id\}::uuid and active/);
   assert.match(route,/ESTATE_ADMIN_REQUIRED/);
-  assert.match(workspace,/No placeholder credential controls are shown/);
+  assert.match(workspace,/controller\.pairingState==="REVOKED"/);
+});
+
+test("Wi-Fi setup supports offline guidance without sending an offline cloud request",async()=>{
+  const workspace=await read("src/components/admin/admin-workspace.tsx");
+  assert.match(workspace,/setOfflineGuide\(true\);if\(controller\.mqttState==="ONLINE"\)run\(\(\)=>smartEstateApi\.openProvisioning/);
+  assert.match(workspace,/href="http:\/\/192\.168\.4\.1\//);
+  assert.match(workspace,/Router passwords are not sent to Nexora Cloud/);
+  assert.doesNotMatch(workspace,/<input[^>]*type="password"/);
 });
 
 test("shared big fan remains absent from Alexa inventory",async()=>{
