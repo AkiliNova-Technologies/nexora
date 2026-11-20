@@ -44,9 +44,29 @@ function PowerControls({device}:{device:AdminOverviewResponse["devices"][number]
   const lock=React.useRef(false);
   const mounted=React.useRef(true);
   React.useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
-  if(!((device.type==="LIGHT"&&device.houseId)||device.type==="FAN"))return <span className="text-xs text-muted-foreground">—</span>;
+  const supported=(device.type==="LIGHT"&&!!device.houseId)||device.type==="FAN";
+  const [stale,setStale]=React.useState(false);
+  React.useEffect(()=>{
+    if(!supported)return;
+    let active=true;
+    let timer:ReturnType<typeof setTimeout>;
+    const refresh=async()=>{
+      if(!lock.current){
+        lock.current=true;
+        try{
+          const state=await smartEstateApi.state(device.id);
+          if(active){setReported(state.reported.on);setConnectivity(state.connectivity);setStale(false);}
+        }catch{if(active)setStale(true);}
+        finally{lock.current=false;}
+      }
+      if(active)timer=setTimeout(refresh,5000);
+    };
+    timer=setTimeout(refresh,5000);
+    return()=>{active=false;clearTimeout(timer);};
+  },[device.id,supported]);
+  if(!supported)return <span className="text-xs text-muted-foreground">—</span>;
   const run=async(on:boolean)=>{
-    if(lock.current||connectivity!=="ONLINE")return;
+    if(lock.current||connectivity!=="ONLINE"||stale)return;
     lock.current=true;setBusy(true);setMessage("Checking device…");
     try{
       const before=await smartEstateApi.state(device.id);
@@ -68,12 +88,12 @@ function PowerControls({device}:{device:AdminOverviewResponse["devices"][number]
       const after=await smartEstateApi.state(device.id);
       if(!mounted.current)return;
       setReported(after.reported.on);setConnectivity(after.connectivity);
-      if(result.status==="EXECUTED")setMessage(after.reported.on===on?"Confirmed by controller":"Executed; reported state not yet matched");
+      if(result.status==="EXECUTED")setMessage(after.reported.on===on?"Last command executed":"Executed; reported state not yet matched");
       else if(!["FAILED","TIMEOUT","CANCELLED","EXPIRED","REJECTED"].includes(result.status))setMessage("Outcome unconfirmed; refresh before retrying");
     }catch(error){if(mounted.current)setMessage(error instanceof Error?error.message:"Command failed");}
     finally{lock.current=false;if(mounted.current)setBusy(false);}
   };
-  return <div className="min-w-40 space-y-1 py-2"><p className="text-xs text-muted-foreground">Reported: {reported===undefined?"Unknown":reported?"On":"Off"}</p><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy||connectivity!=="ONLINE"} onClick={()=>void run(true)}>On</Button><Button size="sm" variant="outline" disabled={busy||connectivity!=="ONLINE"} onClick={()=>void run(false)}>Off</Button></div>{message&&<p role="status" className="max-w-48 text-xs text-muted-foreground">{message}</p>}</div>;
+  return <div className="min-w-40 space-y-1 py-2"><p className="text-xs text-muted-foreground">Reported: {reported===undefined?"Unknown":reported?"On":"Off"}{stale?" (stale)":""}</p><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy||connectivity!=="ONLINE"||stale} onClick={()=>void run(true)}>On</Button><Button size="sm" variant="outline" disabled={busy||connectivity!=="ONLINE"||stale} onClick={()=>void run(false)}>Off</Button></div>{message&&<p role="status" className="max-w-48 text-xs text-muted-foreground">{message}</p>}</div>;
 }
 function ControllerCards({data}:{data:AdminOverviewResponse}){return <Panel title="Estate controllers"><div className="space-y-4">{data.controllers.map(c=><div key={c.id} className="rounded-2xl border border-white/10 p-4"><div className="flex justify-between gap-3"><div><p className="font-medium text-white">{c.name}</p><p className="text-xs text-muted-foreground">{c.id}</p></div><Status value={c.networkState}/></div><dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><Info label="Pairing" value={c.pairingState}/><Info label="MQTT" value={c.mqttState}/><Info label="Wi-Fi" value={c.wifiSsid??"Unavailable"}/><Info label="Signal" value={c.wifiRssi==null?"Unavailable":`${c.wifiRssi} dBm`}/><Info label="Firmware" value={c.firmwareVersion??"Unavailable"}/><Info label="Last heartbeat" value={c.lastHeartbeatAt?new Date(c.lastHeartbeatAt).toLocaleString():"Never"}/></dl><ControllerActions controller={c}/></div>)}{!data.controllers.length&&<p className="text-sm text-muted-foreground">No controller is registered.</p>}</div></Panel>}
 function ControllerActions({controller}:{controller:AdminOverviewResponse["controllers"][number]}){const [offlineGuide,setOfflineGuide]=React.useState(false);const [duration,setDuration]=React.useState("300");const [status,setStatus]=React.useState<string>("Not requested");const [challenge,setChallenge]=React.useState<string|null>(null);const [busy,setBusy]=React.useState(false);const run=(work:()=>Promise<unknown>,done:string)=>{setBusy(true);void work().then(()=>setStatus(done)).catch(e=>setStatus(e instanceof Error?e.message:"Operation failed")).finally(()=>setBusy(false));};React.useEffect(()=>{if(!["PENDING","CLAIMED","PUBLISHED"].includes(status))return;const timer=window.setInterval(()=>{void smartEstateApi.provisioningStatus(controller.id).then(value=>{const latest=value.requests[0];if(latest)setStatus(latest.error?`${latest.status}: ${latest.error}`:latest.status);});},3000);return()=>window.clearInterval(timer);},[controller.id,status]);return <div className="mt-5 border-t border-white/10 pt-4"><div className="flex flex-wrap gap-2"><Select value={duration} onValueChange={setDuration}><SelectTrigger className="w-40 border-white/10 bg-white/[0.04]"><SelectValue placeholder="Window duration"/></SelectTrigger><SelectContent><SelectItem value="120">2 minutes</SelectItem><SelectItem value="300">5 minutes</SelectItem><SelectItem value="600">10 minutes</SelectItem></SelectContent></Select><Button disabled={busy||controller.pairingState==="REVOKED"} onClick={()=>{setOfflineGuide(true);if(controller.mqttState==="ONLINE")run(()=>smartEstateApi.openProvisioning(controller.id,Number(duration)),"PENDING");}}>Configure Wi-Fi</Button><Button variant="outline" disabled={busy} onClick={()=>run(()=>smartEstateApi.cancelProvisioning(controller.id),"Cancellation pending")}>Cancel window</Button>{controller.pairingState!=="PAIRED"&&<Button variant="outline" disabled={busy} onClick={()=>{setBusy(true);void smartEstateApi.initiateControllerPairing(controller.id).then(value=>{setChallenge(`${value.pairingId}:${value.challenge}`);setStatus("Pairing challenge issued for 10 minutes");}).catch(e=>setStatus(e instanceof Error?e.message:"Pairing failed")).finally(()=>setBusy(false));}}>Start pairing</Button>}<Button variant="destructive" disabled={busy||controller.pairingState==="REVOKED"} onClick={()=>{if(window.confirm(`Revoke ${controller.name}? Existing controller access will be disabled.`))run(()=>smartEstateApi.revokeController(controller.id),"Controller revoked; broker revocation pending");}}>Revoke</Button></div><p role="status" className="mt-3 text-xs text-muted-foreground">Provisioning: {status}</p>{challenge&&<div className="mt-3 rounded-xl bg-black/30 p-3 text-xs"><p className="font-medium text-amber-300">Pairing challenge — enter only on the physical controller</p><code className="mt-2 block break-all text-white">{challenge}</code></div>}{offlineGuide&&<div className="mt-4 space-y-3 rounded-xl border border-white/10 p-4 text-sm"><p className="font-medium">Connect controller to Wi-Fi</p><p>{controller.mqttState==="ONLINE"?"Wait for the controller to acknowledge the setup window.":"If the controller has lost Wi-Fi, its updated firmware automatically opens a protected setup network after one minute. No cloud command is sent."}</p><ol className="list-decimal space-y-2 pl-5 text-muted-foreground"><li>Open your phone or computer Wi-Fi settings and join the controller’s configured Nexora-Setup network using its setup password.</li><li>Open the local setup page and enter the controller proof, router network name and password.</li><li>Reconnect your phone or computer to the internet and check the controller heartbeat here. The controller saves the new profile only after Wi-Fi and MQTT validation.</li></ol><a className="inline-block underline" href="http://192.168.4.1/" target="_blank" rel="noopener noreferrer">Open local Wi-Fi setup</a><p className="text-xs text-muted-foreground">Requires updated firmware for offline setup. Router passwords are not sent to Nexora Cloud.</p><Button variant="outline" onClick={()=>setOfflineGuide(false)}>Close instructions</Button></div>}</div>}
