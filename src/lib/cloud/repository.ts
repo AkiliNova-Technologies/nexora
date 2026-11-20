@@ -57,7 +57,7 @@ export async function houses(userId: string) {
 
 export async function estateDevices(userId: string, estateId: string) {
   const sql = getSql();
-  const rows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${userId}::uuid and a.active) can_command from smart_estate.device d where d.retired_at is null and d.estate_id=${estateId} and d.house_id is null and (smart_estate.can_view_estate(${userId}::uuid,d.estate_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${userId}::uuid and a.active)) order by d.name`;
+  const rows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,(smart_estate.can_control_estate_device(${userId}::uuid,d.estate_id,d.type) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${userId}::uuid and a.active)) can_command from smart_estate.device d where d.retired_at is null and d.estate_id=${estateId} and d.house_id is null and (smart_estate.can_view_estate(${userId}::uuid,d.estate_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${userId}::uuid and a.active)) order by d.name`;
   return rows.map((row) => ({ id: row.id, houseId: row.house_id, estateId: row.estate_id, roomId: row.room_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_command ? ["VIEW", "READ_STATE", "COMMAND"] : ["VIEW", "READ_STATE"] }));
 }
 
