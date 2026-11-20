@@ -38,7 +38,14 @@ export class Bridge {
         this.store.cleanup(this.retentionDays);
         await this.flushEvents();
         if (this.brokerHealthy) await this.pollCommands();
-        if (this.brokerHealthy) await this.pollProvisioning();
+        // Optional commissioning must not block normal device control.
+        if (this.brokerHealthy && process.env.NEXORA_ENABLE_WIFI_PROVISIONING === "true") {
+          try {
+            await this.pollProvisioning();
+          } catch (error) {
+            log("warn", "provisioning_poll_failed", { error: error instanceof Error ? error.message : "unknown" });
+          }
+        }
         this.cloudHealthy = true;
         this.backoffMs = 0;
       } catch (error) {
