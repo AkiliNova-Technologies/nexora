@@ -40,7 +40,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   const mode = input.mode;
   const expectedVersion = input.expectedVersion;
   const clientRequestId = input.clientRequestId;
-  if ((mode !== "ARMED" && mode !== "DISARMED") || !Number.isSafeInteger(expectedVersion) || Number(expectedVersion) < 0 || typeof clientRequestId !== "string" || !uuidPattern.test(clientRequestId)) {
+  if ((mode !== "ARMED_AWAY" && mode !== "DISARMED") || typeof expectedVersion !== "number" || !Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || typeof clientRequestId !== "string" || !uuidPattern.test(clientRequestId)) {
     return NextResponse.json({ code: "INVALID_SECURITY_MODE", message: "A valid perimeter mode, expected version, and request ID are required" }, { status: 400, headers });
   }
 
