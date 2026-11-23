@@ -12,7 +12,7 @@ import type { DeviceCommand, DeviceState, Estate, GateResource } from "@/domain/
 import { smartEstateApi, smartEstateMode } from "@/lib/api/client";
 import {
   consumeConfirmation, createConfirmation, createContext, describeStatus, filterDevicesForQuery,
-  normalizeCommand, parseCommand, permissionContextKey, resolveControlCommand, shouldProcessTranscript,
+  normalizeCommand, parseCommand, permissionContextKey, resolveClarificationChoice, resolveControlCommand, shouldProcessTranscript,
 } from "@/lib/nexora-ai/command-engine";
 import { buildEstateKnowledge, describeCapabilities, summarizeInventory } from "@/lib/nexora-ai/estate-knowledge";
 import type { AssistantMessage, AssistantPhase, ConversationContext, ResolvedCommand } from "@/lib/nexora-ai/types";
@@ -128,13 +128,23 @@ export function NexoraAssistant() {
 
     let inventory = gate ? [...snapshot.devices, gate.device] : snapshot.devices;
     let effectiveParsed = parsed;
-    if (context.pendingClarification && context.pendingClarification.expiresAt > Date.now()) {
-      const candidateDevices = inventory.filter((device) => context.pendingClarification?.candidateIds.includes(device.id));
-      const choice = candidateDevices.filter((device) => normalizeCommand(`${device.name} ${rooms.find((room) => room.id === device.roomId)?.name ?? ""} ${houses.find((house) => house.id === device.houseId)?.name ?? ""}`).includes(normalizeCommand(trimmed)));
-      if (choice.length === 1) {
-        inventory = choice;
-        effectiveParsed = context.pendingClarification.parsed;
+    if (context.pendingClarification) {
+      if (context.pendingClarification.expiresAt <= Date.now()) {
         context.pendingClarification = null;
+      } else {
+        const pending = context.pendingClarification;
+        const candidateDevices = inventory.filter((device) => pending.candidateIds.includes(device.id));
+        const choice = resolveClarificationChoice(trimmed, candidateDevices, rooms, houses);
+        if (choice) {
+          inventory = [choice];
+          effectiveParsed = pending.parsed;
+          context.pendingClarification = null;
+        } else if (candidateDevices.length) {
+          respond(`Please choose one of the available devices: ${candidateDevices.map((device, index) => `${index + 1}. ${device.name}`).join(", ")}. You can say “first”, “second”, or the device name.`);
+          return;
+        } else {
+          context.pendingClarification = null;
+        }
       }
     }
 
