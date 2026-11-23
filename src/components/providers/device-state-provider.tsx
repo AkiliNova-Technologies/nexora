@@ -64,9 +64,9 @@ export function DeviceStateProvider({ children }: { children: React.ReactNode })
     const authorizedHouseDevicesPromise=account?.role==="ESTATE_ADMIN"
       ? smartEstateApi.houses().then(async authorizedHouses=>(await Promise.all(authorizedHouses.map(item=>smartEstateApi.devices(item.id)))).flat())
       : devicesPromise;
-    const estateDevicesPromise=account?.role==="ESTATE_ADMIN"
-      ? smartEstateApi.estates().then(async estates => (await Promise.all(estates.map(estate=>smartEstateApi.estateDevices(estate.id)))).flat())
-      : Promise.resolve([]);
+    // Shared estate devices (especially the entrance gate) are part of every
+    // resident's inventory. Backend permissions keep non-gate shared devices read-only.
+    const estateDevicesPromise=smartEstateApi.estates().then(async estates => (await Promise.all(estates.map(estate=>smartEstateApi.estateDevices(estate.id)))).flat());
     void Promise.all([smartEstateApi.securityEvents(house.id),devicesPromise]).then(([history,devices])=>{if(isCurrent())setSecurityEvents(replaceSecurityEvents(history,house.id,new Set(devices.map(device=>device.id))));}).catch((cause)=>{if(isCurrent())setSecurityEventsError(cause instanceof Error?cause.message:"Unable to load security activity");}).finally(()=>{if(isCurrent())setSecurityEventsLoading(false);});
     void smartEstateApi.securityMode(house.id).then(value=>{if(isCurrent())setSecurityModeState(current=>completeSecurityModeLoad(current,value,house.id,requestId));}).catch((cause)=>{if(isCurrent()){setSecurityModeState(current=>({...current,loading:false}));setSecurityModeError(cause instanceof Error?cause.message:"Unable to load security mode");}});
     void smartEstateApi.securitySensorPolicies(house.id).then(value=>{if(isCurrent())setPolicyState(current=>completePolicyLoad(current,value,house.id,requestId));}).catch((cause)=>{if(isCurrent()){setPolicyState(current=>({...current,loading:false}));setSecuritySensorPolicyError(cause instanceof Error?cause.message:"Unable to load security sensor policies");}});

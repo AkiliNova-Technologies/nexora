@@ -12,7 +12,7 @@ import type { DeviceCommand, DeviceState, Estate, GateResource } from "@/domain/
 import { smartEstateApi, smartEstateMode } from "@/lib/api/client";
 import {
   consumeConfirmation, createConfirmation, createContext, describeStatus, filterDevicesForQuery,
-  normalizeCommand, parseCommand, permissionContextKey, resolveControlCommand, shouldProcessTranscript,
+  normalizeCommand, parseCommand, permissionContextKey, resolveClarificationChoice, resolveControlCommand, shouldProcessTranscript,
 } from "@/lib/nexora-ai/command-engine";
 import { buildEstateKnowledge, describeCapabilities, summarizeInventory } from "@/lib/nexora-ai/estate-knowledge";
 import type { AssistantMessage, AssistantPhase, ConversationContext, ResolvedCommand } from "@/lib/nexora-ai/types";
@@ -31,7 +31,7 @@ function message(kind: AssistantMessage["kind"], text: string, phase?: Assistant
 
 export function NexoraAssistant() {
   const pathname = usePathname();
-  const { status, user, houses, currentHouse, rooms, securityMode, securityEvents, eventStatus, error: backendError, changeSecurityMode } = useSmartEstate();
+  const { status, user, estates, houses, currentHouse, rooms, securityMode, securityEvents, eventStatus, error: backendError, changeSecurityMode } = useSmartEstate();
   const snapshot = useDevices();
   const store = useDeviceStore();
   const [open, setOpen] = React.useState(false);
@@ -84,31 +84,94 @@ export function NexoraAssistant() {
     securityModes: securityMode ? [securityMode] : [],
   }), [gate, houses, rooms, securityMode, snapshot.devices, snapshot.states]);
   const permissionsKey = React.useMemo(() => permissionContextKey([...snapshot.devices, ...(gate ? [gate.device] : [])]), [gate, snapshot.devices]);
+  const scopeContextKey = React.useMemo(() => `${user?.role ?? "anonymous"}:${houses.map((house) => house.id).toSorted().join(",")}:${estates.map((estate) => estate.id).toSorted().join(",")}`, [estates, houses, user?.role]);
 
   const processCommand = React.useCallback(async (raw: string) => {
     const trimmed = raw.trim();
     if (!trimmed) return;
     setMessages((current) => [...current, message("user", trimmed)]);
     setInput(""); setPhase("processing");
-    const parsed = parseCommand(trimmed);
+    let parsed = parseCommand(trimmed);
     const context = contextRef.current;
+    if (context.pendingSecurityTarget) {
+      if (context.pendingSecurityTarget.expiresAt <= Date.now()) {
+        context.pendingSecurityTarget = null;
+      } else if (parsed.intent === "UNKNOWN") {
+        const reply = normalizeCommand(trimmed);
+        const houseOrdinal = reply.match(/\b(first|second|third|1st|2nd|3rd|one|two|three|1|2|3)\b/);
+        const houseIndex = houseOrdinal ? ({ first: 0, "1st": 0, one: 0, "1": 0, second: 1, "2nd": 1, two: 1, "2": 1, third: 2, "3rd": 2, three: 2, "3": 2 } as Record<string, number>)[houseOrdinal[1]] : undefined;
+        const selectedHouse = houses.find((house) => normalizeCommand(house.name) === reply || reply.includes(normalizeCommand(house.name))) ?? (houseIndex === undefined ? undefined : houses[houseIndex]);
+        if (selectedHouse) {
+          parsed = { raw: trimmed, normalized: normalizeCommand(trimmed), intent: "SECURITY_CONTROL", action: context.pendingSecurityTarget.action, targetText: normalizeCommand(selectedHouse.name), group: "HOUSE" };
+          context.pendingSecurityTarget = null;
+        } else if (/\b(perimeter|compound|estate)\b/.test(reply) && user?.role === "ESTATE_ADMIN") {
+          parsed = { raw: trimmed, normalized: normalizeCommand(trimmed), intent: "SECURITY_CONTROL", action: context.pendingSecurityTarget.action, targetText: "perimeter", group: "HOUSE" };
+          context.pendingSecurityTarget = null;
+        } else {
+          respond("Please name one of the authorized houses: " + houses.map((house) => house.name).join(", ") + ".");
+          return;
+        }
+      } else if (parsed.intent !== "CONFIRM" && parsed.intent !== "CANCEL") {
+        context.pendingSecurityTarget = null;
+      }
+    }
 
     if (parsed.intent === "CANCEL") {
-      context.pendingConfirmation = null; context.pendingSecurityConfirmation = null; context.pendingClarification = null;
+      context.pendingConfirmation = null; context.pendingSecurityConfirmation = null; context.pendingSecurityTarget = null; context.pendingClarification = null;
       respond("Cancelled. I won't send a device command."); return;
     }
     if (parsed.intent === "CONFIRM") {
       const securityConfirmation = context.pendingSecurityConfirmation;
       context.pendingSecurityConfirmation = null;
-      if (securityConfirmation && securityConfirmation.expiresAt > Date.now()) {
-        if (securityConfirmation.houseId !== currentHouse?.id) { respond("That security context changed, so I cancelled the request.", "error"); return; }
-        try { await changeSecurityMode(securityConfirmation.mode); respond(`${currentHouse.name} security is now ${securityConfirmation.mode.toLowerCase().replaceAll("_", " ")}.`, "success"); }
-        catch (cause) { respond(cause instanceof Error ? cause.message : "The security mode could not be changed.", "error"); }
+      if (securityConfirmation) {
+        if (securityConfirmation.expiresAt <= Date.now()) { respond("That security confirmation expired. Please issue the command again.", "error"); return; }
+        try {
+          if (securityConfirmation.scope === "ESTATE_PERIMETER") {
+            if (user?.role !== "ESTATE_ADMIN" || !securityConfirmation.estateId) throw new Error("Only an estate administrator can change perimeter security.");
+            const current = await smartEstateApi.estateSecurityMode(securityConfirmation.estateId);
+            const result = await smartEstateApi.updateEstateSecurityMode(securityConfirmation.estateId, { mode: securityConfirmation.mode as "DISARMED" | "ARMED_AWAY", expectedVersion: current.version, clientRequestId: crypto.randomUUID() });
+            respond(`Estate perimeter security is now ${result.mode.toLowerCase().replaceAll("_", " ")}.`, "success");
+          } else {
+            const houseIds = securityConfirmation.houseIds ?? [];
+            if (!houseIds.length || houseIds.some((id) => !houses.some((house) => house.id === id))) throw new Error("The authorized house list changed. Please issue the command again.");
+            const completed: string[] = [];
+            const failed: string[] = [];
+            for (const houseId of houseIds) {
+              const house = houses.find((item) => item.id === houseId)!;
+              try {
+                if (house.id === currentHouse?.id && securityMode?.houseId === house.id) {
+                  await changeSecurityMode(securityConfirmation.mode);
+                } else {
+                  const current = await smartEstateApi.securityMode(house.id);
+                  await smartEstateApi.updateSecurityMode(house.id, { mode: securityConfirmation.mode, expectedVersion: current.version, clientRequestId: crypto.randomUUID() });
+                }
+                completed.push(house.name);
+              } catch (cause) {
+                failed.push(`${house.name}: ${cause instanceof Error ? cause.message : "request failed"}`);
+              }
+            }
+            const summary = [completed.length ? `Updated: ${completed.join(", ")}.` : "", failed.length ? `Not updated: ${failed.join("; ")}.` : ""].filter(Boolean).join(" ");
+            respond(summary || "No house security changes were made.", failed.length ? "error" : "success");
+          }
+        } catch (cause) {
+          respond(cause instanceof Error ? cause.message : "The security mode could not be changed.", "error");
+        }
         return;
       }
       const confirmation = consumeConfirmation(context.pendingConfirmation);
       context.pendingConfirmation = null;
-      if (!confirmation) { respond("There is no active confirmation, or it has expired.", "error"); return; }
+      if (!confirmation) {
+        if (context.pendingClarification && context.pendingClarification.expiresAt > Date.now()) {
+          const choices = snapshot.devices.filter((device) => context.pendingClarification?.candidateIds.includes(device.id));
+          respond(`I still need you to choose a device: ${choices.map((device, index) => `${index + 1}. ${device.name}`).join(", ")}.`);
+          return;
+        }
+        if (context.pendingSecurityTarget) {
+          respond(`Please name one of the authorized houses: ${houses.map((house) => house.name).join(", ")}.`);
+          return;
+        }
+        respond("There is no active confirmation, or it has expired.", "error"); return;
+      }
       await execute(confirmation.command); return;
     }
     if (parsed.intent === "CAPABILITIES" || parsed.intent === "HELP") { respond(describeCapabilities(knowledge, parsed.helpTopic), "idle", false); return; }
@@ -117,24 +180,73 @@ export function NexoraAssistant() {
       respond(parsed.unsupportedFeature === "TEMPERATURE" ? "Temperature control isn't available for the estate fan. I can switch an authorized fan on or off when it is connected." : "Variable fan speed is only available when the registered device and controller expose that capability.", "idle"); return;
     }
     if (parsed.intent === "SECURITY_CONTROL") {
-      if (!currentHouse || !securityMode) { respond("No authorized house security zone is currently available.", "error"); return; }
-      if (parsed.group === "ESTATE" && houses.length > 1) { respond("I can't safely change all house and compound zones as one operation yet. Please name one house.", "error"); return; }
-      const target = parsed.targetText && !normalizeCommand(currentHouse.name).includes(parsed.targetText) ? houses.find((house) => normalizeCommand(house.name).includes(parsed.targetText!)) : currentHouse;
-      if (!target || target.id !== currentHouse.id) { respond("Please select that house first so I can use its authoritative security state.", "error"); return; }
+      const isAdmin = user?.role === "ESTATE_ADMIN";
       const mode = parsed.action === "DISARM" ? "DISARMED" : "ARMED_AWAY";
-      context.pendingSecurityConfirmation = { houseId: currentHouse.id, mode, createdAt: Date.now(), expiresAt: Date.now() + 30_000 };
-      respond(`Please confirm: ${mode === "DISARMED" ? "disarm" : "arm"} ${currentHouse.name}. This security change expires in 30 seconds.`, "idle", false); return;
+      const requestsPerimeter = /\b(perimeter|compound)\b/.test(parsed.normalized);
+      if (requestsPerimeter) {
+        if (!isAdmin) { respond("You can manage security only for your own house. Estate perimeter security is restricted to an estate administrator.", "error"); return; }
+        if (estates.length !== 1) { respond(estates.length ? "I need the estate identified before changing perimeter security." : "No authorized estate security zone is available.", "error"); return; }
+        const estate = estates[0];
+        try { await smartEstateApi.adminOverview(estate.id); }
+        catch { respond("You do not have administrator authority for this estate perimeter.", "error"); return; }
+        context.pendingSecurityConfirmation = { scope: "ESTATE_PERIMETER", estateId: estate.id, mode, createdAt: Date.now(), expiresAt: Date.now() + 30_000 };
+        respond(`Please confirm: ${mode === "DISARMED" ? "disarm" : "arm"} the ${estate.name} perimeter. This confirmation expires in 30 seconds.`, "idle", false); return;
+      }
+
+      if (parsed.group === "ESTATE") {
+        if (!isAdmin) { respond("Only an estate administrator can arm or disarm multiple houses.", "error"); return; }
+        if (estates.length !== 1) { respond("Please target one house at a time when your account has access to multiple estates.", "error"); return; }
+        let administeredHouseIds = new Set<string>();
+        try {
+          const overview = await smartEstateApi.adminOverview(estates[0].id);
+          administeredHouseIds = new Set(overview.houses.map((house) => house.id));
+        } catch {
+          respond("I couldn't verify administrator scope for this estate. No security changes were made.", "error"); return;
+        }
+        const managedHouses = houses.filter((house) => administeredHouseIds.has(house.id));
+        if (!managedHouses.length) { respond("No administrator-managed houses are available in this estate.", "error"); return; }
+        context.pendingSecurityConfirmation = { scope: "HOUSES", houseIds: managedHouses.map((house) => house.id), mode, createdAt: Date.now(), expiresAt: Date.now() + 30_000 };
+        respond(`Please confirm: ${mode === "DISARMED" ? "disarm" : "arm"} security for all ${managedHouses.length} houses in ${estates[0].name}: ${managedHouses.map((house) => house.name).join(", ")}. This confirmation expires in 30 seconds.`, "idle", false); return;
+      }
+
+      const namedHouse = parsed.targetText
+        ? houses.find((house) => normalizeCommand(house.name).includes(parsed.targetText!) || parsed.normalized.includes(normalizeCommand(house.name)))
+        : undefined;
+      if (parsed.targetText && !namedHouse) {
+        respond("I couldn't match that house to an authorized house in your estate. Please use the house name shown in your account.", "error"); return;
+      }
+      const target = namedHouse ?? currentHouse ?? (houses.length === 1 ? houses[0] : null);
+      if (!target && isAdmin && houses.length > 1) {
+        context.pendingSecurityTarget = { action: parsed.action === "DISARM" ? "DISARM" : "ARM", createdAt: Date.now(), expiresAt: Date.now() + 5 * 60_000 };
+        respond(`Which house should I ${mode === "DISARMED" ? "disarm" : "arm"}? You can choose: ${houses.map((house) => house.name).join(", ")}.`); return;
+      }
+      if (!target || !houses.some((house) => house.id === target.id)) { respond("No authorized house security zone is currently available.", "error"); return; }
+      if (!isAdmin && target.id !== currentHouse?.id) { respond("You can arm or disarm only your own selected house.", "error"); return; }
+      context.pendingSecurityConfirmation = { scope: "HOUSE", houseIds: [target.id], mode, createdAt: Date.now(), expiresAt: Date.now() + 30_000 };
+      respond(`Please confirm: ${mode === "DISARMED" ? "disarm" : "arm"} ${target.name}. This confirmation expires in 30 seconds.`, "idle", false); return;
     }
 
     let inventory = gate ? [...snapshot.devices, gate.device] : snapshot.devices;
     let effectiveParsed = parsed;
-    if (context.pendingClarification && context.pendingClarification.expiresAt > Date.now()) {
-      const candidateDevices = inventory.filter((device) => context.pendingClarification?.candidateIds.includes(device.id));
-      const choice = candidateDevices.filter((device) => normalizeCommand(`${device.name} ${rooms.find((room) => room.id === device.roomId)?.name ?? ""} ${houses.find((house) => house.id === device.houseId)?.name ?? ""}`).includes(normalizeCommand(trimmed)));
-      if (choice.length === 1) {
-        inventory = choice;
-        effectiveParsed = context.pendingClarification.parsed;
+    if (context.pendingClarification) {
+      if (context.pendingClarification.expiresAt <= Date.now()) {
         context.pendingClarification = null;
+      } else if (effectiveParsed.intent !== "UNKNOWN") {
+        context.pendingClarification = null;
+      } else {
+        const pending = context.pendingClarification;
+        const candidateDevices = inventory.filter((device) => pending.candidateIds.includes(device.id));
+        const choice = resolveClarificationChoice(trimmed, candidateDevices, rooms, houses);
+        if (choice) {
+          inventory = [choice];
+          effectiveParsed = pending.parsed;
+          context.pendingClarification = null;
+        } else if (candidateDevices.length) {
+          respond("Please choose one of the available devices: " + candidateDevices.map((device, index) => (index + 1) + ". " + device.name).join(", ") + ". You can say “first”, “second”, or the device name.");
+          return;
+        } else {
+          context.pendingClarification = null;
+        }
       }
     }
 
@@ -168,7 +280,7 @@ export function NexoraAssistant() {
       respond(matches.map((device) => describeStatus(device, states[device.id])).join(" ")); context.lastDeviceIds = matches.map((item) => item.id); return;
     }
     respond("I couldn't understand that command. You can ask me to control lights or fans, check status, list devices, or manage an authorized gate.", "error");
-  }, [changeSecurityMode, currentHouse, execute, gate, houses, knowledge, respond, rooms, securityEvents, securityMode, snapshot.devices, snapshot.states]);
+  }, [changeSecurityMode, currentHouse, estates, execute, gate, houses, knowledge, respond, rooms, securityEvents, securityMode, snapshot.devices, snapshot.states, user]);
 
   const recognition = useSpeechRecognition((text) => {
     if (!shouldProcessTranscript(recentTranscripts.current, text)) return;
@@ -180,7 +292,7 @@ export function NexoraAssistant() {
     // A user/house boundary must synchronously discard session-only conversation data.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages([]); setPhase("idle"); observedCommands.current.clear();
-  }, [currentHouse?.id, permissionsKey, user?.id]);
+  }, [currentHouse?.id, permissionsKey, scopeContextKey, user?.id, user?.role]);
   React.useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, recognition.interim]);
   React.useEffect(() => {
     if (!open || smartEstateMode === "MOCK" || gate) return;

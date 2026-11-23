@@ -33,6 +33,7 @@ const securityDeviceIconMap = {
   LOCK: LockKeyhole,
   MOTION_SENSOR: Radar,
   CONTACT_SENSOR: DoorOpen,
+  ULTRASONIC_SENSOR: Radar,
 };
 
 const statusStyles = {
@@ -42,13 +43,15 @@ const statusStyles = {
 };
 
 export default function SecurityPage() {
-  const {securityMode,securityModeLoading,securityModePending,securityModeError,changeSecurityMode,securityEvents}=useSmartEstate();
+  const {securityMode,securityModeLoading,securityModePending,securityModeError,changeSecurityMode,securityEvents,currentHouse,securitySensorPolicies,securitySensorPoliciesLoading}=useSmartEstate();
   const {devices,states}=useDevices();
   const mode=securityMode?.mode??"DISARMED";
   const systemStatus: SecurityStatus =
     mode === "DISARMED" ? "warning" : "safe";
   const modeLabel=mode==="ARMED_AWAY"?"Armed Away":mode==="ARMED_HOME"?"Armed Home":"Disarmed";
-  const sensors=devices.filter(device=>["MOTION_SENSOR","CONTACT_SENSOR"].includes(device.type));
+  const sensors=devices.filter(device=>device.houseId===currentHouse?.id&&["MOTION_SENSOR","CONTACT_SENSOR","ULTRASONIC_SENSOR"].includes(device.type));
+  const canArmHome=!securitySensorPoliciesLoading&&sensors.some(device=>states[device.id]?.connectivity==="ONLINE"&&securitySensorPolicies.some(policy=>policy.deviceId===device.id&&policy.enabled&&policy.monitorArmedHome));
+  const canArmAway=!securitySensorPoliciesLoading&&sensors.some(device=>states[device.id]?.connectivity==="ONLINE"&&securitySensorPolicies.some(policy=>policy.deviceId===device.id&&policy.enabled&&policy.monitorArmedAway));
   const metrics:MetricCardItem[]=[
     {title:"Security Mode",value:securityModeLoading?"Loading…":securityMode?modeLabel:"Unknown",icon:ShieldCheck,tone:securityMode?"green":"neutral",footerText:securityMode?"Backend-authoritative security mode.":"Security configuration is unavailable."},
     {title:"Registered Sensors",value:sensors.length,icon:Radar,tone:"blue",footerText:"Security sensors assigned to this house."},
@@ -87,7 +90,7 @@ export default function SecurityPage() {
             <SectionCards items={metrics} />
 
             <section className="grid gap-5">
-              <SecurityStatusPanel mode={mode} available={Boolean(securityMode)} status={systemStatus} loading={securityModeLoading} pending={securityModePending} error={securityModeError} onChange={changeSecurityMode} />
+              <SecurityStatusPanel mode={mode} available={Boolean(securityMode)} status={systemStatus} loading={securityModeLoading} pending={securityModePending} error={securityModeError} onChange={changeSecurityMode} canArmHome={canArmHome} canArmAway={canArmAway} />
             </section>
 
             <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
@@ -104,11 +107,11 @@ export default function SecurityPage() {
 function SecurityStatusPanel({
   mode,
   status, available,
-  loading,pending,error,onChange,
+  loading,pending,error,onChange,canArmHome,canArmAway,
 }: {
   mode: SecurityMode;
   status: SecurityStatus; available:boolean;
-  loading:boolean;pending:boolean;error:string|null;onChange:(mode:SecurityMode)=>Promise<void>;
+  loading:boolean;pending:boolean;error:string|null;onChange:(mode:SecurityMode)=>Promise<void>;canArmHome:boolean;canArmAway:boolean;
 }) {
   const labels:Record<SecurityMode,string>={DISARMED:"Disarmed",ARMED_HOME:"Armed Home",ARMED_AWAY:"Armed Away"};
   return (
@@ -158,7 +161,7 @@ function SecurityStatusPanel({
               key={item}
               variant="outline"
               onClick={() => void onChange(item).catch(()=>undefined)}
-              disabled={loading||pending||!available}
+              disabled={loading||pending||!available||(item==="ARMED_HOME"&&!canArmHome)||(item==="ARMED_AWAY"&&!canArmAway)}
               className={cn(
                 "rounded-2xl border-white/10 bg-transparent text-muted-foreground hover:bg-white/10 hover:text-white",
                 mode === item && "border-blue-500/20 bg-blue-500/15 text-blue-400"
@@ -170,6 +173,7 @@ function SecurityStatusPanel({
         </div>
         {pending&&<p className="mt-3 text-sm text-blue-400">Updating security mode…</p>}
         {error&&<p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}
+        {(!canArmHome||!canArmAway)&&<p role="status" className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-200">Arming is unavailable until this house has an online, enabled security sensor assigned to it for the selected mode. Perimeter sensors do not count as house sensors.</p>}
         <div className="mt-8 border-t border-white/10 pt-6">
           <h3 id="sensor-policy-heading" className="text-lg font-semibold text-white">Intrusion Monitoring</h3>
           <p className="mt-1 text-sm text-muted-foreground">Choose which motion sensors participate in security monitoring.</p>
@@ -181,9 +185,9 @@ function SecurityStatusPanel({
 
 function SecurityDeviceGrid() {
   const { devices, states } = useDevices();
-  const {rooms}=useSmartEstate();
+  const {rooms,currentHouse}=useSmartEstate();
   const securityDevices = devices.filter((device) =>
-    ["CAMERA", "LOCK", "MOTION_SENSOR", "CONTACT_SENSOR"].includes(device.type),
+    device.houseId===currentHouse?.id&&["CAMERA", "LOCK", "MOTION_SENSOR", "CONTACT_SENSOR","ULTRASONIC_SENSOR"].includes(device.type),
   );
   return (
     <section className="rounded-[2rem] border border-white/10 bg-card/80 p-5 shadow-xl shadow-black/20 backdrop-blur">
@@ -251,8 +255,8 @@ function SecurityDeviceCard({ device, state,roomName }: { device: Device; state:
 }
 
 function SecuritySensorPolicies(){
-  const {securitySensorPolicies:policies,securitySensorPoliciesLoading:loading,securitySensorPolicyPendingId:pendingId,securitySensorPolicyError:error,changeSecuritySensorPolicy,rooms}=useSmartEstate();
-  const {devices,states}=useDevices();const sensors=devices.filter(device=>device.type==="MOTION_SENSOR");
+  const {securitySensorPolicies:policies,securitySensorPoliciesLoading:loading,securitySensorPolicyPendingId:pendingId,securitySensorPolicyError:error,changeSecuritySensorPolicy,rooms,currentHouse}=useSmartEstate();
+  const {devices,states}=useDevices();const sensors=devices.filter(device=>device.houseId===currentHouse?.id&&["MOTION_SENSOR","CONTACT_SENSOR","ULTRASONIC_SENSOR"].includes(device.type));
   const update=(deviceId:string,key:"enabled"|"monitorArmedHome"|"monitorArmedAway",value:boolean)=>{const policy=policies.find(item=>item.deviceId===deviceId);if(!policy)return;void changeSecuritySensorPolicy(deviceId,{enabled:policy.enabled,monitorArmedHome:policy.monitorArmedHome,monitorArmedAway:policy.monitorArmedAway,[key]:value}).catch(()=>undefined);};
   return <div className="mt-5" aria-labelledby="sensor-policy-heading">
     {loading&&<p className="text-sm text-muted-foreground">Loading sensor policies…</p>}{error&&<p role="alert" className="mb-3 text-sm text-red-400">{error}</p>}

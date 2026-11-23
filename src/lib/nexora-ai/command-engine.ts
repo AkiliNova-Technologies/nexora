@@ -29,8 +29,8 @@ export function permissionContextKey(devices: Device[]) {
 export function parseCommand(raw: string): ParsedCommand {
   const normalized = normalizeCommand(raw);
   if (!normalized) return { raw, normalized, intent: "UNKNOWN" };
-  if (/^(yes|confirm|do it|proceed|okay|ok)$/.test(normalized)) return { raw, normalized, intent: "CONFIRM" };
-  if (/^(cancel|never mind|nevermind)$/.test(normalized)) return { raw, normalized, intent: "CANCEL" };
+  if (/^(yes|yes please|confirm|confirm it|do it|proceed|go ahead|okay|ok|sure)$/.test(normalized)) return { raw, normalized, intent: "CONFIRM" };
+  if (/^(no|no thanks|cancel|cancel it|never mind|nevermind|not now|dont|do not)$/.test(normalized)) return { raw, normalized, intent: "CANCEL" };
   if (/\b(set|change|make)\b.*\b(temperature|degrees?|celsius)\b|\b(temperature|thermostat)\b.*\b\d+\b/.test(normalized)) return { raw, normalized, intent: "UNSUPPORTED_FEATURE", unsupportedFeature: "TEMPERATURE" };
   if (/\b(set|change)\b.*\b(fan speed|speed)\b/.test(normalized)) return { raw, normalized, intent: "UNSUPPORTED_FEATURE", unsupportedFeature: "FAN_SPEED" };
   if (/\b(tell|describe)\b.*\b(estate|property)\b|\bwhat(?:'s| is) (?:in|available in) (?:this|the) estate\b/.test(normalized)) return { raw, normalized, intent: "ESTATE_OVERVIEW" };
@@ -79,6 +79,46 @@ function extractTarget(value: string) {
     .replace(/\b(turn|switch|open|close|stop|arm|disarm|check|show|list|tell|what|is|are|me|my|all|every|both|interior|available|connected|the|on|off|status|state|devices?|controllers?|in|at|for|please|could|would|you)\b/g, " ")
     .replace(/\b(light|lights|lighting|lamp|lamps|fan|fans|ac|air conditioner|ventilation|gate|motion|sensor|sensors|security|house|estate)\b/g, " ")
     .replace(/\s+/g, " ").trim() || undefined;
+}
+
+/** Resolve a short natural-language answer against the exact candidate list we offered. */
+export function resolveClarificationChoice(
+  reply: string,
+  candidates: Device[],
+  rooms: Room[],
+  houses: Array<{ id: string; name: string }> = [],
+): Device | null {
+  if (!candidates.length) return null;
+  const normalized = normalizeCommand(reply);
+  if (!normalized) return null;
+
+  const namedNumber = normalized.match(/\b(?:light|lamp|fan|device|option|number)\s*(1|2|3)\b/);
+  if (namedNumber) {
+    const numbered = candidates.filter((device) => new RegExp("\\b(?:light|lamp|fan|device)\\s*" + namedNumber[1] + "\\b").test(normalizeCommand(device.name)));
+    if (numbered.length === 1) return numbered[0];
+  }
+  const ordinal = normalized.match(/\b(first|second|third|1st|2nd|3rd|one|two|three|1|2|3)\b/);
+  if (ordinal) {
+    const index = ({ first: 0, "1st": 0, one: 0, "1": 0, second: 1, "2nd": 1, two: 1, "2": 1, third: 2, "3rd": 2, three: 2, "3": 2 } as Record<string, number>)[ordinal[1]];
+    if (index !== undefined && candidates[index]) return candidates[index];
+  }
+
+  const exact = candidates.filter((device) => {
+    const room = rooms.find((item) => item.id === device.roomId);
+    const house = houses.find((item) => item.id === device.houseId);
+    const labels = [device.name, room?.name, house?.name].filter(Boolean).map((value) => normalizeCommand(value!));
+    return labels.some((label) => label === normalized || label.includes(normalized));
+  });
+  if (exact.length === 1) return exact[0];
+
+  const words = normalized.split(" ").filter((word) => word.length > 1 && !["the", "one", "please", "number", "option"].includes(word));
+  const matches = candidates.filter((device) => {
+    const room = rooms.find((item) => item.id === device.roomId);
+    const house = houses.find((item) => item.id === device.houseId);
+    const label = normalizeCommand(`${device.name} ${room?.name ?? ""} ${house?.name ?? ""}`);
+    return words.length > 0 && words.every((word) => label.split(" ").includes(word));
+  });
+  return matches.length === 1 ? matches[0] : null;
 }
 
 export type Resolution =
@@ -157,7 +197,7 @@ export function describeStatus(device: Device, state?: DeviceState) {
 }
 
 export function createContext(userKey: string, houseId: string | null): ConversationContext {
-  return { userKey, houseId, lastDeviceIds: [], lastHouseId: houseId, pendingConfirmation: null, pendingSecurityConfirmation: null, pendingClarification: null };
+  return { userKey, houseId, lastDeviceIds: [], lastHouseId: houseId, pendingConfirmation: null, pendingSecurityConfirmation: null, pendingSecurityTarget: null, pendingClarification: null };
 }
 
 export function createConfirmation(command: ResolvedCommand, now = Date.now()): PendingConfirmation {
