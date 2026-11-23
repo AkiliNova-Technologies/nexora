@@ -171,15 +171,26 @@ export function NexoraAssistant() {
         if (!isAdmin) { respond("You can manage security only for your own house. Estate perimeter security is restricted to an estate administrator.", "error"); return; }
         if (estates.length !== 1) { respond(estates.length ? "I need the estate identified before changing perimeter security." : "No authorized estate security zone is available.", "error"); return; }
         const estate = estates[0];
+        try { await smartEstateApi.adminOverview(estate.id); }
+        catch { respond("You do not have administrator authority for this estate perimeter.", "error"); return; }
         context.pendingSecurityConfirmation = { scope: "ESTATE_PERIMETER", estateId: estate.id, mode, createdAt: Date.now(), expiresAt: Date.now() + 30_000 };
         respond(`Please confirm: ${mode === "DISARMED" ? "disarm" : "arm"} the ${estate.name} perimeter. This confirmation expires in 30 seconds.`, "idle", false); return;
       }
 
       if (parsed.group === "ESTATE") {
         if (!isAdmin) { respond("Only an estate administrator can arm or disarm multiple houses.", "error"); return; }
-        if (!houses.length) { respond("No authorized houses are available for this estate.", "error"); return; }
-        context.pendingSecurityConfirmation = { scope: "HOUSES", houseIds: houses.map((house) => house.id), mode, createdAt: Date.now(), expiresAt: Date.now() + 30_000 };
-        respond(`Please confirm: ${mode === "DISARMED" ? "disarm" : "arm"} security for all ${houses.length} authorized houses: ${houses.map((house) => house.name).join(", ")}. This confirmation expires in 30 seconds.`, "idle", false); return;
+        if (estates.length !== 1) { respond("Please target one house at a time when your account has access to multiple estates.", "error"); return; }
+        let administeredHouseIds = new Set<string>();
+        try {
+          const overview = await smartEstateApi.adminOverview(estates[0].id);
+          administeredHouseIds = new Set(overview.houses.map((house) => house.id));
+        } catch {
+          respond("I couldn't verify administrator scope for this estate. No security changes were made.", "error"); return;
+        }
+        const managedHouses = houses.filter((house) => administeredHouseIds.has(house.id));
+        if (!managedHouses.length) { respond("No administrator-managed houses are available in this estate.", "error"); return; }
+        context.pendingSecurityConfirmation = { scope: "HOUSES", houseIds: managedHouses.map((house) => house.id), mode, createdAt: Date.now(), expiresAt: Date.now() + 30_000 };
+        respond(`Please confirm: ${mode === "DISARMED" ? "disarm" : "arm"} security for all ${managedHouses.length} houses in ${estates[0].name}: ${managedHouses.map((house) => house.name).join(", ")}. This confirmation expires in 30 seconds.`, "idle", false); return;
       }
 
       const namedHouse = parsed.targetText
