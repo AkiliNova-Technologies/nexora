@@ -108,9 +108,11 @@ export function NexoraAssistant() {
           parsed = { raw: trimmed, normalized: normalizeCommand(trimmed), intent: "SECURITY_CONTROL", action: context.pendingSecurityTarget.action, targetText: "perimeter", group: "HOUSE" };
           context.pendingSecurityTarget = null;
         } else {
-          respond(`Please name one of the authorized houses: ${houses.map((house) => house.name).join(", ")}.`);
+          respond("Please name one of the authorized houses: " + houses.map((house) => house.name).join(", ") + ".");
           return;
         }
+      } else if (parsed.intent !== "CONFIRM" && parsed.intent !== "CANCEL") {
+        context.pendingSecurityTarget = null;
       }
     }
 
@@ -229,6 +231,8 @@ export function NexoraAssistant() {
     if (context.pendingClarification) {
       if (context.pendingClarification.expiresAt <= Date.now()) {
         context.pendingClarification = null;
+      } else if (effectiveParsed.intent !== "UNKNOWN") {
+        context.pendingClarification = null;
       } else {
         const pending = context.pendingClarification;
         const candidateDevices = inventory.filter((device) => pending.candidateIds.includes(device.id));
@@ -238,7 +242,7 @@ export function NexoraAssistant() {
           effectiveParsed = pending.parsed;
           context.pendingClarification = null;
         } else if (candidateDevices.length) {
-          respond(`Please choose one of the available devices: ${candidateDevices.map((device, index) => `${index + 1}. ${device.name}`).join(", ")}. You can say “first”, “second”, or the device name.`);
+          respond("Please choose one of the available devices: " + candidateDevices.map((device, index) => (index + 1) + ". " + device.name).join(", ") + ". You can say “first”, “second”, or the device name.");
           return;
         } else {
           context.pendingClarification = null;
