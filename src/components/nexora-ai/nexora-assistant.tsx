@@ -101,7 +101,7 @@ export function NexoraAssistant() {
         if (selectedHouse) {
           parsed = { raw: trimmed, normalized: normalizeCommand(trimmed), intent: "SECURITY_CONTROL", action: context.pendingSecurityTarget.action, targetText: normalizeCommand(selectedHouse.name), group: "HOUSE" };
           context.pendingSecurityTarget = null;
-        } else if (/\\b(perimeter|compound|estate)\\b/.test(reply) && user?.role === "ESTATE_ADMIN") {
+        } else if (/\b(perimeter|compound|estate)\b/.test(reply) && user?.role === "ESTATE_ADMIN") {
           parsed = { raw: trimmed, normalized: normalizeCommand(trimmed), intent: "SECURITY_CONTROL", action: context.pendingSecurityTarget.action, targetText: "perimeter", group: "HOUSE" };
           context.pendingSecurityTarget = null;
         } else {
@@ -166,7 +166,7 @@ export function NexoraAssistant() {
     if (parsed.intent === "SECURITY_CONTROL") {
       const isAdmin = user?.role === "ESTATE_ADMIN";
       const mode = parsed.action === "DISARM" ? "DISARMED" : "ARMED_AWAY";
-      const requestsPerimeter = /\\b(perimeter|compound)\\b/.test(parsed.normalized);
+      const requestsPerimeter = /\b(perimeter|compound)\b/.test(parsed.normalized);
       if (requestsPerimeter) {
         if (!isAdmin) { respond("You can manage security only for your own house. Estate perimeter security is restricted to an estate administrator.", "error"); return; }
         if (estates.length !== 1) { respond(estates.length ? "I need the estate identified before changing perimeter security." : "No authorized estate security zone is available.", "error"); return; }
