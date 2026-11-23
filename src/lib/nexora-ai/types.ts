@@ -54,8 +54,16 @@ export interface PendingConfirmation {
 }
 
 export interface PendingSecurityConfirmation {
-  houseId: HouseId;
+  scope: "HOUSE" | "HOUSES" | "ESTATE_PERIMETER";
+  houseIds?: HouseId[];
+  estateId?: string;
   mode: "DISARMED" | "ARMED_HOME" | "ARMED_AWAY";
+  createdAt: number;
+  expiresAt: number;
+}
+
+export interface PendingSecurityTarget {
+  action: "ARM" | "DISARM";
   createdAt: number;
   expiresAt: number;
 }
@@ -74,5 +82,6 @@ export interface ConversationContext {
   lastHouseId: HouseId | null;
   pendingConfirmation: PendingConfirmation | null;
   pendingSecurityConfirmation: PendingSecurityConfirmation | null;
+  pendingSecurityTarget: PendingSecurityTarget | null;
   pendingClarification: PendingClarification | null;
 }
