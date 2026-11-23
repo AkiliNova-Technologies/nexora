@@ -98,7 +98,7 @@ export function NexoraAssistant() {
         context.pendingSecurityTarget = null;
       } else if (parsed.intent === "UNKNOWN") {
         const reply = normalizeCommand(trimmed);
-        const houseOrdinal = reply.match(/\\b(first|second|third|1st|2nd|3rd|one|two|three|1|2|3)\\b/);
+        const houseOrdinal = reply.match(/\b(first|second|third|1st|2nd|3rd|one|two|three|1|2|3)\b/);
         const houseIndex = houseOrdinal ? ({ first: 0, "1st": 0, one: 0, "1": 0, second: 1, "2nd": 1, two: 1, "2": 1, third: 2, "3rd": 2, three: 2, "3": 2 } as Record<string, number>)[houseOrdinal[1]] : undefined;
         const selectedHouse = houses.find((house) => normalizeCommand(house.name) === reply || reply.includes(normalizeCommand(house.name))) ?? (houseIndex === undefined ? undefined : houses[houseIndex]);
         if (selectedHouse) {
