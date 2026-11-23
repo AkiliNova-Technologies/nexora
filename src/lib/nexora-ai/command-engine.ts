@@ -115,7 +115,7 @@ export function resolveClarificationChoice(
   const matches = candidates.filter((device) => {
     const room = rooms.find((item) => item.id === device.roomId);
     const house = houses.find((item) => item.id === device.houseId);
-    const label = normalizeCommand(\`\${device.name} \${room?.name ?? ""} \${house?.name ?? ""}\`);
+    const label = normalizeCommand(`${device.name} ${room?.name ?? ""} ${house?.name ?? ""}`);
     return words.length > 0 && words.every((word) => label.split(" ").includes(word));
   });
   return matches.length === 1 ? matches[0] : null;
