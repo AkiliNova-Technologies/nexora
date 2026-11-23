@@ -33,6 +33,7 @@ const securityDeviceIconMap = {
   LOCK: LockKeyhole,
   MOTION_SENSOR: Radar,
   CONTACT_SENSOR: DoorOpen,
+  ULTRASONIC_SENSOR: Radar,
 };
 
 const statusStyles = {
