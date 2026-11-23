@@ -185,10 +185,10 @@ export function NexoraAssistant() {
       const namedHouse = parsed.targetText
         ? houses.find((house) => normalizeCommand(house.name).includes(parsed.targetText!) || parsed.normalized.includes(normalizeCommand(house.name)))
         : undefined;
-      const target = namedHouse ?? currentHouse ?? (houses.length === 1 ? houses[0] : null);
-      if (parsed.targetText && !namedHouse && !currentHouse) {
-        respond("I couldn't match that house to an authorized house in your estate.", "error"); return;
+      if (parsed.targetText && !namedHouse) {
+        respond("I couldn't match that house to an authorized house in your estate. Please use the house name shown in your account.", "error"); return;
       }
+      const target = namedHouse ?? currentHouse ?? (houses.length === 1 ? houses[0] : null);
       if (!target && isAdmin && houses.length > 1) {
         context.pendingSecurityTarget = { action: parsed.action === "DISARM" ? "DISARM" : "ARM", createdAt: Date.now(), expiresAt: Date.now() + 5 * 60_000 };
         respond(`Which house should I ${mode === "DISARMED" ? "disarm" : "arm"}? You can choose: ${houses.map((house) => house.name).join(", ")}.`); return;
