@@ -98,7 +98,9 @@ export function NexoraAssistant() {
         context.pendingSecurityTarget = null;
       } else if (parsed.intent === "UNKNOWN") {
         const reply = normalizeCommand(trimmed);
-        const selectedHouse = houses.find((house) => normalizeCommand(house.name) === reply || reply.includes(normalizeCommand(house.name)));
+        const houseOrdinal = reply.match(/\\b(first|second|third|1st|2nd|3rd|one|two|three|1|2|3)\\b/);
+        const houseIndex = houseOrdinal ? ({ first: 0, "1st": 0, one: 0, "1": 0, second: 1, "2nd": 1, two: 1, "2": 1, third: 2, "3rd": 2, three: 2, "3": 2 } as Record<string, number>)[houseOrdinal[1]] : undefined;
+        const selectedHouse = houses.find((house) => normalizeCommand(house.name) === reply || reply.includes(normalizeCommand(house.name))) ?? (houseIndex === undefined ? undefined : houses[houseIndex]);
         if (selectedHouse) {
           parsed = { raw: trimmed, normalized: normalizeCommand(trimmed), intent: "SECURITY_CONTROL", action: context.pendingSecurityTarget.action, targetText: normalizeCommand(selectedHouse.name), group: "HOUSE" };
           context.pendingSecurityTarget = null;
@@ -156,7 +158,18 @@ export function NexoraAssistant() {
       }
       const confirmation = consumeConfirmation(context.pendingConfirmation);
       context.pendingConfirmation = null;
-      if (!confirmation) { respond("There is no active confirmation, or it has expired.", "error"); return; }
+      if (!confirmation) {
+        if (context.pendingClarification && context.pendingClarification.expiresAt > Date.now()) {
+          const choices = snapshot.devices.filter((device) => context.pendingClarification?.candidateIds.includes(device.id));
+          respond(`I still need you to choose a device: ${choices.map((device, index) => `${index + 1}. ${device.name}`).join(", ")}.`);
+          return;
+        }
+        if (context.pendingSecurityTarget) {
+          respond(`Please name one of the authorized houses: ${houses.map((house) => house.name).join(", ")}.`);
+          return;
+        }
+        respond("There is no active confirmation, or it has expired.", "error"); return;
+      }
       await execute(confirmation.command); return;
     }
     if (parsed.intent === "CAPABILITIES" || parsed.intent === "HELP") { respond(describeCapabilities(knowledge, parsed.helpTopic), "idle", false); return; }
