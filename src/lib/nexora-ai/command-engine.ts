@@ -94,7 +94,7 @@ export function resolveClarificationChoice(
 
   const namedNumber = normalized.match(/\b(?:light|lamp|fan|device|option|number)\s*(1|2|3)\b/);
   if (namedNumber) {
-    const numbered = candidates.filter((device) => new RegExp(\`(?:^|\\D)\${namedNumber[1]}(?:$|\\D)\`).test(normalizeCommand(device.name)));
+    const numbered = candidates.filter((device) => new RegExp("(?:^|\\D)" + namedNumber[1] + "(?:$|\\D)").test(normalizeCommand(device.name)));
     if (numbered.length === 1) return numbered[0];
   }
   const ordinal = normalized.match(/\b(first|second|third|1st|2nd|3rd|one|two|three|1|2|3)\b/);
