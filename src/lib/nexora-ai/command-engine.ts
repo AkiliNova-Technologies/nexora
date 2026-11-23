@@ -30,7 +30,7 @@ export function parseCommand(raw: string): ParsedCommand {
   const normalized = normalizeCommand(raw);
   if (!normalized) return { raw, normalized, intent: "UNKNOWN" };
   if (/^(yes|yes please|confirm|confirm it|do it|proceed|go ahead|okay|ok|sure)$/.test(normalized)) return { raw, normalized, intent: "CONFIRM" };
-  if (/^(no|no thanks|cancel|cancel it|never mind|nevermind|stop|not now|dont|do not)$/.test(normalized)) return { raw, normalized, intent: "CANCEL" };
+  if (/^(no|no thanks|cancel|cancel it|never mind|nevermind|not now|dont|do not)$/.test(normalized)) return { raw, normalized, intent: "CANCEL" };
   if (/\b(set|change|make)\b.*\b(temperature|degrees?|celsius)\b|\b(temperature|thermostat)\b.*\b\d+\b/.test(normalized)) return { raw, normalized, intent: "UNSUPPORTED_FEATURE", unsupportedFeature: "TEMPERATURE" };
   if (/\b(set|change)\b.*\b(fan speed|speed)\b/.test(normalized)) return { raw, normalized, intent: "UNSUPPORTED_FEATURE", unsupportedFeature: "FAN_SPEED" };
   if (/\b(tell|describe)\b.*\b(estate|property)\b|\bwhat(?:'s| is) (?:in|available in) (?:this|the) estate\b/.test(normalized)) return { raw, normalized, intent: "ESTATE_OVERVIEW" };
@@ -92,6 +92,11 @@ export function resolveClarificationChoice(
   const normalized = normalizeCommand(reply);
   if (!normalized) return null;
 
+  const namedNumber = normalized.match(/\\b(?:light|lamp|fan|device|option|number)\\s*(1|2|3)\\b/);
+  if (namedNumber) {
+    const numbered = candidates.filter((device) => new RegExp(`(?:^|\\\\D)${namedNumber[1]}(?:$|\\\\D)`).test(normalizeCommand(device.name)));
+    if (numbered.length === 1) return numbered[0];
+  }
   const ordinal = normalized.match(/\\b(first|second|third|1st|2nd|3rd|one|two|three|1|2|3)\\b/);
   if (ordinal) {
     const index = ({ first: 0, "1st": 0, one: 0, "1": 0, second: 1, "2nd": 1, two: 1, "2": 1, third: 2, "3rd": 2, three: 2, "3": 2 } as Record<string, number>)[ordinal[1]];
