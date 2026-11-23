@@ -9,6 +9,7 @@ import {
   normalizeCommand,
   parseCommand,
   permissionContextKey,
+  resolveClarificationChoice,
   resolveControlCommand,
   shouldProcessTranscript,
 } from "../src/lib/nexora-ai/command-engine.ts";
@@ -44,6 +45,30 @@ test("recognizes fan aliases and rejects invented temperature control", () => {
 test("recognizes house security changes and compound scope", () => {
   assert.deepEqual([parseCommand("Arm House One").intent, parseCommand("Disarm House Two").action], ["SECURITY_CONTROL", "DISARM"]);
   assert.equal(parseCommand("Arm the entire estate").group, "ESTATE");
+});
+
+test("resolves ordinal and numbered follow-up replies against the offered devices", () => {
+  const candidates = [
+    { id: "light-1", houseId: "house-1", name: "House 1 Light 1", type: "LIGHT", capabilities: [{ type: "POWER" }] },
+    { id: "light-2", houseId: "house-1", name: "House 1 Light 2", type: "LIGHT", capabilities: [{ type: "POWER" }] },
+  ];
+  const houses = [{ id: "house-1", name: "House 1" }];
+  assert.equal(resolveClarificationChoice("light 1", candidates, [], houses)?.id, "light-1");
+  assert.equal(resolveClarificationChoice("the second one", candidates, [], houses)?.id, "light-2");
+  assert.equal(resolveClarificationChoice("House 1 Light 2", candidates, [], houses)?.id, "light-2");
+  assert.equal(resolveClarificationChoice("something else", candidates, [], houses), null);
+});
+
+test("keeps gate stop distinct from cancelling a pending assistant action", () => {
+  assert.equal(parseCommand("Stop the gate").intent, "CONTROL_DEVICE");
+  assert.equal(parseCommand("cancel").intent, "CANCEL");
+  assert.equal(parseCommand("no thanks").intent, "CANCEL");
+});
+
+test("recognizes perimeter security as a separate security target", () => {
+  const parsed = parseCommand("Arm the perimeter");
+  assert.equal(parsed.intent, "SECURITY_CONTROL");
+  assert.match(parsed.normalized, /perimeter/);
 });
 
 test("extracts a room and resolves one authorized device", () => {
