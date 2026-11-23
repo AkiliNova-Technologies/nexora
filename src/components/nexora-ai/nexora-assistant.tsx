@@ -84,6 +84,7 @@ export function NexoraAssistant() {
     securityModes: securityMode ? [securityMode] : [],
   }), [gate, houses, rooms, securityMode, snapshot.devices, snapshot.states]);
   const permissionsKey = React.useMemo(() => permissionContextKey([...snapshot.devices, ...(gate ? [gate.device] : [])]), [gate, snapshot.devices]);
+  const scopeContextKey = React.useMemo(() => `${user?.role ?? "anonymous"}:${houses.map((house) => house.id).toSorted().join(",")}:${estates.map((estate) => estate.id).toSorted().join(",")}`, [estates, houses, user?.role]);
 
   const processCommand = React.useCallback(async (raw: string) => {
     const trimmed = raw.trim();
@@ -274,7 +275,7 @@ export function NexoraAssistant() {
     // A user/house boundary must synchronously discard session-only conversation data.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages([]); setPhase("idle"); observedCommands.current.clear();
-  }, [currentHouse?.id, permissionsKey, user?.id, user?.role]);
+  }, [currentHouse?.id, permissionsKey, scopeContextKey, user?.id, user?.role]);
   React.useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, recognition.interim]);
   React.useEffect(() => {
     if (!open || smartEstateMode === "MOCK" || gate) return;
