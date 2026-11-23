@@ -134,7 +134,7 @@ export function NexoraAssistant() {
             for (const houseId of houseIds) {
               const house = houses.find((item) => item.id === houseId)!;
               try {
-                if (smartEstateMode === "MOCK" && house.id === currentHouse?.id) {
+                if (house.id === currentHouse?.id && securityMode?.houseId === house.id) {
                   await changeSecurityMode(securityConfirmation.mode);
                 } else {
                   const current = await smartEstateApi.securityMode(house.id);
@@ -263,7 +263,7 @@ export function NexoraAssistant() {
     // A user/house boundary must synchronously discard session-only conversation data.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages([]); setPhase("idle"); observedCommands.current.clear();
-  }, [currentHouse?.id, permissionsKey, user?.id]);
+  }, [currentHouse?.id, permissionsKey, user?.id, user?.role]);
   React.useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, recognition.interim]);
   React.useEffect(() => {
     if (!open || smartEstateMode === "MOCK" || gate) return;
