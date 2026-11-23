@@ -92,12 +92,12 @@ export function resolveClarificationChoice(
   const normalized = normalizeCommand(reply);
   if (!normalized) return null;
 
-  const namedNumber = normalized.match(/\\b(?:light|lamp|fan|device|option|number)\\s*(1|2|3)\\b/);
+  const namedNumber = normalized.match(/\b(?:light|lamp|fan|device|option|number)\s*(1|2|3)\b/);
   if (namedNumber) {
-    const numbered = candidates.filter((device) => new RegExp(`(?:^|\\\\D)${namedNumber[1]}(?:$|\\\\D)`).test(normalizeCommand(device.name)));
+    const numbered = candidates.filter((device) => new RegExp(\`(?:^|\\D)\${namedNumber[1]}(?:$|\\D)\`).test(normalizeCommand(device.name)));
     if (numbered.length === 1) return numbered[0];
   }
-  const ordinal = normalized.match(/\\b(first|second|third|1st|2nd|3rd|one|two|three|1|2|3)\\b/);
+  const ordinal = normalized.match(/\b(first|second|third|1st|2nd|3rd|one|two|three|1|2|3)\b/);
   if (ordinal) {
     const index = ({ first: 0, "1st": 0, one: 0, "1": 0, second: 1, "2nd": 1, two: 1, "2": 1, third: 2, "3rd": 2, three: 2, "3": 2 } as Record<string, number>)[ordinal[1]];
     if (index !== undefined && candidates[index]) return candidates[index];
@@ -115,7 +115,7 @@ export function resolveClarificationChoice(
   const matches = candidates.filter((device) => {
     const room = rooms.find((item) => item.id === device.roomId);
     const house = houses.find((item) => item.id === device.houseId);
-    const label = normalizeCommand(`${device.name} ${room?.name ?? ""} ${house?.name ?? ""}`);
+    const label = normalizeCommand(\`\${device.name} \${room?.name ?? ""} \${house?.name ?? ""}\`);
     return words.length > 0 && words.every((word) => label.split(" ").includes(word));
   });
   return matches.length === 1 ? matches[0] : null;
