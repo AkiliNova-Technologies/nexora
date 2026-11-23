@@ -192,7 +192,7 @@ export function describeStatus(device: Device, state?: DeviceState) {
 }
 
 export function createContext(userKey: string, houseId: string | null): ConversationContext {
-  return { userKey, houseId, lastDeviceIds: [], lastHouseId: houseId, pendingConfirmation: null, pendingSecurityConfirmation: null, pendingClarification: null };
+  return { userKey, houseId, lastDeviceIds: [], lastHouseId: houseId, pendingConfirmation: null, pendingSecurityConfirmation: null, pendingSecurityTarget: null, pendingClarification: null };
 }
 
 export function createConfirmation(command: ResolvedCommand, now = Date.now()): PendingConfirmation {
