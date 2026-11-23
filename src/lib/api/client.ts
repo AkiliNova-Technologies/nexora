@@ -74,6 +74,24 @@ export class SmartEstateApiClient {
   securityEvents = (houseId: string) => this.request<SecurityEvent[]>(`/houses/${houseId}/security-events?limit=5`);
   securityEventPage = (houseId:string,page=0,pageSize=20) => this.request<SecurityEventPage>(`/houses/${houseId}/security-events/page?page=${page}&pageSize=${pageSize}`);
   securityMode = (houseId: string) => this.request<HouseSecurityMode>(`/houses/${houseId}/security-mode`);
+  estateSecurityMode = async (estateId: string): Promise<{ estateId: string; mode: "DISARMED" | "ARMED_AWAY"; version: number; updatedAt: string | null }> => {
+    const response = await fetch(`/api/estates/${encodeURIComponent(estateId)}/security-mode`, { credentials: "include", headers: { Accept: "application/json" }, cache: "no-store" });
+    if (!response.ok) {
+      let error: ApiErrorResponse | undefined;
+      try { error = await response.json() as ApiErrorResponse; } catch { /* non-JSON error */ }
+      throw new ApiError(error?.message || `Request failed (${response.status})`, response.status, error?.code);
+    }
+    return response.json();
+  };
+  updateEstateSecurityMode = async (estateId: string, body: { mode: "DISARMED" | "ARMED_AWAY"; expectedVersion: number; clientRequestId: string }): Promise<{ estateId: string; mode: "DISARMED" | "ARMED_AWAY"; version: number; updatedAt: string | null }> => {
+    const response = await fetch(`/api/estates/${encodeURIComponent(estateId)}/security-mode`, { method: "PUT", credentials: "include", headers: { Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
+    if (!response.ok) {
+      let error: ApiErrorResponse | undefined;
+      try { error = await response.json() as ApiErrorResponse; } catch { /* non-JSON error */ }
+      throw new ApiError(error?.message || `Request failed (${response.status})`, response.status, error?.code);
+    }
+    return response.json();
+  };
   updateSecurityMode = (houseId: string, body: SecurityModeChangeRequest) => this.mutate<HouseSecurityMode>(`/houses/${houseId}/security-mode`, body, "PUT");
   securitySensorPolicies = (houseId:string) => this.request<SecuritySensorPolicy[]>(`/houses/${houseId}/security-sensor-policies`);
   updateSecuritySensorPolicy = (houseId:string,deviceId:string,body:SecuritySensorPolicyUpdateRequest) => this.mutate<SecuritySensorPolicy>(`/houses/${houseId}/security-sensor-policies/${deviceId}`,body,"PUT");
