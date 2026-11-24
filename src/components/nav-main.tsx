@@ -17,6 +17,8 @@ export function NavMain({
     title: string;
     url: string;
     icon?: React.ReactNode;
+    /** Match only this exact path (for section roots such as /admin). */
+    exact?: boolean;
   }[];
 }) {
   const pathname = usePathname();
@@ -27,7 +29,7 @@ export function NavMain({
         <SidebarMenu className="gap-1">
           {items.map((item) => {
             const isActive =
-              pathname === item.url || pathname.startsWith(`${item.url}/`);
+              pathname === item.url || (!item.exact && pathname.startsWith(`${item.url}/`));
 
             return (
               <SidebarMenuItem key={item.title}>

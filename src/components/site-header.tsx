@@ -10,6 +10,16 @@ import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Select,SelectContent,SelectItem,SelectTrigger,SelectValue } from "@/components/ui/select";
 
 const pageMeta: Record<string, { title: string; description: string }> = {
+  // Admin entries come first so nested admin routes match them before "/admin".
+  "/admin/houses": { title: "Houses", description: "Homeowners, devices and security scope" },
+  "/admin/residents": { title: "Residents", description: "Homeowner assignments across the estate" },
+  "/admin/devices": { title: "Devices", description: "Monitor and control every estate device" },
+  "/admin/security": { title: "Estate Security", description: "House and perimeter security modes" },
+  "/admin/gate": { title: "Entrance Gate", description: "Shared entrance state and safety controls" },
+  "/admin/controllers": { title: "Controllers", description: "Connectivity and hardware readiness" },
+  "/admin/activity": { title: "Activity", description: "Recent commands and security events" },
+  "/admin/settings": { title: "Estate Settings", description: "Estate identity and workspace configuration" },
+  "/admin": { title: "Estate Overview", description: "Live operational data across the estate" },
   "/dashboard": {
     title: "Home Overview",
     description: "Live device monitoring and automation control",
@@ -55,6 +65,8 @@ const pageMeta: Record<string, { title: string; description: string }> = {
 export function SiteHeader() {
   const pathname = usePathname();
   const { eventStatus, user, houses, currentHouse, selectHouse } = useSmartEstate();
+  // The homeowner house picker does not apply to the estate administrator workspace.
+  const isAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
 
   const currentPage =
     pageMeta[pathname] ??
@@ -87,12 +99,12 @@ export function SiteHeader() {
         <div className="hidden flex-1 justify-center px-8 md:flex">
           <div className="flex h-10 w-full max-w-md items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm text-muted-foreground">
             <Search className="size-4" />
-            <span>Search devices, rooms, automations...</span>
+            <span>{isAdmin ? "Search houses, devices, residents..." : "Search devices, rooms, automations..."}</span>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {houses.length > 1 && <div className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex"><span>House</span><Select value={currentHouse?.id} onValueChange={selectHouse}><SelectTrigger aria-label="Select house" className="h-9 w-44 border-white/10 bg-[#111827]"><SelectValue placeholder="Select a house"/></SelectTrigger><SelectContent>{houses.map(house=><SelectItem key={house.id} value={house.id}>{house.name}</SelectItem>)}</SelectContent></Select></div>}
+          {!isAdmin && houses.length > 1 && <div className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex"><span>House</span><Select value={currentHouse?.id} onValueChange={selectHouse}><SelectTrigger aria-label="Select house" className="h-9 w-44 border-white/10 bg-[#111827]"><SelectValue placeholder="Select a house"/></SelectTrigger><SelectContent>{houses.map(house=><SelectItem key={house.id} value={house.id}>{house.name}</SelectItem>)}</SelectContent></Select></div>}
           <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-muted-foreground sm:flex">
             {eventStatus === "live" ? <Cloud className="size-4 text-green-400" /> : <CloudOff className="size-4 text-amber-400" />}
             {eventStatus === "live" ? "Cloud connected" : eventStatus === "reconnecting" ? "Cloud reconnecting" : "Cloud status unknown"}
