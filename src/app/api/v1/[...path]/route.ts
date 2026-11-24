@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseRouteClient, requireUser } from "@/lib/supabase/server";
-import { adminOverview, assignHouseOwner,CommandSubmissionError, dashboard, deviceState, devices, estateDevices, houses, profile, rooms, submitCommand } from "@/lib/cloud/repository";
+import { adminOverview, assignHouseOwner,CommandSubmissionError, dashboard, deviceState, devices, estateDevices, houses, markStaleControllerDevicesOffline, profile, rooms, submitCommand } from "@/lib/cloud/repository";
 import { getSql } from "@/lib/cloud/db";
 import { validateMutationRequest } from "@/lib/cloud/security";
 import { diagnosticRoute, elapsedMs, logServerTiming } from "@/lib/cloud/timing";
@@ -10,6 +10,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ path: string[] }> };
 const jsonError = (status: number, code: string, message: string) => NextResponse.json({ code, message }, { status });
+// 22P02 = invalid_text_representation, e.g. a non-UUID path segment cast to uuid.
+// That is a client error, not a database outage.
+const isInvalidIdentifier = (error: unknown) => Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "22P02");
 
 async function authenticated() {
   const user = await requireUser();
@@ -30,6 +33,8 @@ export async function GET(request: NextRequest, context: Context) {
   let outcome = "completed";
   try {
     const sql = getSql();
+    const returnsConnectivity = (path.length === 3 && ((path[0] === "houses" && path[2] === "sync") || (path[0] === "devices" && path[2] === "state") || (path[0] === "estates" && path[2] === "gate"))) || (path.length === 2 && path[0] === "admin" && path[1] === "overview");
+    if (returnsConnectivity) await markStaleControllerDevicesOffline(sql);
     if (path.length === 1 && path[0] === "me") return NextResponse.json(await profile(user));
     if (path.length === 1 && path[0] === "houses") return NextResponse.json(await houses(user.id));
     if (path.length === 1 && path[0] === "estates") {
@@ -70,13 +75,13 @@ export async function GET(request: NextRequest, context: Context) {
       return NextResponse.json(rows);
     }
     if (path.length === 3 && path[0] === "houses" && path[2] === "security-events") {
-      const limit = Math.min(100, Math.max(1, Number(request.nextUrl.searchParams.get("limit") || 50)));
+      const requestedLimit = Number(request.nextUrl.searchParams.get("limit") || 50), limit = Number.isInteger(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 50;
       const rows = await sql`select e.id,e.house_id "houseId",e.device_id "deviceId",e.type,e.severity,e.occurred_at "occurredAt",e.received_at "receivedAt",e.metadata,e.acknowledged_at "acknowledgedAt" from smart_estate.security_event e join smart_estate.house h on h.id=e.house_id where e.house_id=${path[1]} and (smart_estate.can_view_house(${user.id}::uuid,e.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active)) order by e.occurred_at desc limit ${limit}`;
       return NextResponse.json(rows);
     }
     if (path.length === 4 && path[0] === "houses" && path[2] === "security-events" && path[3] === "page") {
-      const page = Math.max(0, Number(request.nextUrl.searchParams.get("page") || 0)), pageSize = [10,20,50].includes(Number(request.nextUrl.searchParams.get("pageSize"))) ? Number(request.nextUrl.searchParams.get("pageSize")) : 20;
-      const rows = await sql`select e.id,e.house_id "houseId",e.device_id "deviceId",e.type,e.severity,e.occurred_at "occurredAt",e.received_at "receivedAt",e.metadata,e.acknowledged_at "acknowledgedAt",count(*) over()::int total from smart_estate.security_event e where e.house_id=${path[1]} and smart_estate.can_view_house(${user.id}::uuid,e.house_id) order by e.occurred_at desc limit ${pageSize} offset ${page * pageSize}`;
+      const requestedPage = Number(request.nextUrl.searchParams.get("page") || 0), page = Number.isSafeInteger(requestedPage) ? Math.min(10_000, Math.max(0, requestedPage)) : 0, pageSize = [10,20,50].includes(Number(request.nextUrl.searchParams.get("pageSize"))) ? Number(request.nextUrl.searchParams.get("pageSize")) : 20;
+      const rows = await sql`select e.id,e.house_id "houseId",e.device_id "deviceId",e.type,e.severity,e.occurred_at "occurredAt",e.received_at "receivedAt",e.metadata,e.acknowledged_at "acknowledgedAt",count(*) over()::int total from smart_estate.security_event e join smart_estate.house h on h.id=e.house_id where e.house_id=${path[1]} and (smart_estate.can_view_house(${user.id}::uuid,e.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active)) order by e.occurred_at desc limit ${pageSize} offset ${page * pageSize}`;
       const total = rows[0]?.total ?? 0; return NextResponse.json({ items: rows.map((row) => { const item = { ...row }; delete item.total; return item; }), page, pageSize, total, totalPages: Math.ceil(total / pageSize) });
     }
     if (path.length === 3 && path[0] === "estates" && path[2] === "gate") {
@@ -88,6 +93,7 @@ export async function GET(request: NextRequest, context: Context) {
   } catch (error) {
     if (error instanceof ControllerAuthorizationError) return jsonError(404,"CONTROLLER_NOT_FOUND",error.message);
     if (error instanceof ControllerConflictError) return jsonError(409,"CONTROLLER_CONFLICT",error.message);
+    if (isInvalidIdentifier(error)) { outcome = "not_found"; return jsonError(404, "NOT_FOUND", "Resource was not found"); }
     outcome = "database_unavailable";
     console.error("Cloud API read failed", { route, errorCode: error && typeof error === "object" && "code" in error ? String(error.code) : "UNKNOWN", authMs, totalMs: elapsedMs(startedAt) });
     return jsonError(503, "DATABASE_UNAVAILABLE", "Cloud data is unavailable");
@@ -116,7 +122,9 @@ async function mutation(request: NextRequest, context: Context) {
     if (path.join("/") === "auth/register") {
       const emailRedirectTo = new URL("/auth/confirm?next=/dashboard", process.env.NEXT_PUBLIC_SITE_URL || request.nextUrl.origin).toString();
       const { data, error } = await supabase.auth.signUp({ email: String(body.email || ""), password: String(body.password || ""), options: { data: { display_name: String(body.name || "").trim() }, emailRedirectTo } });
-      if (error || !data.user) return jsonError(400, "REGISTRATION_FAILED", error?.message || "Registration failed");
+      // Only surface password-policy feedback; other provider messages (e.g. "User
+      // already registered") would let anyone enumerate accounts.
+      if (error || !data.user) return jsonError(400, "REGISTRATION_FAILED", error?.code === "weak_password" ? error.message : "Registration failed. Check your details or try signing in.");
       return routeClient.applyCookies(NextResponse.json({ id: data.user.id, name: String(body.name || "").trim(), email: data.user.email || "", role: "USER", requiresEmailConfirmation: !data.session }, { status: 201 }));
     }
     if (path.join("/") === "auth/logout") { await supabase.auth.signOut(); return routeClient.applyCookies(new NextResponse(null, { status: 204 })); }
@@ -143,7 +151,11 @@ async function mutation(request: NextRequest, context: Context) {
       const mode = typeof body.mode === "string" && ["DISARMED","ARMED_HOME","ARMED_AWAY"].includes(body.mode) ? body.mode : null;
       const expectedVersion = Number(body.expectedVersion);
       if (!mode || !Number.isInteger(expectedVersion)) return jsonError(400, "INVALID_SECURITY_MODE", "A valid mode and version are required");
-      const rows = await sql`update smart_estate.house_security_state s set mode=${mode},version=version+1,updated_at=now() from smart_estate.house h where h.id=s.house_id and s.house_id=${path[1]} and s.version=${expectedVersion} and (smart_estate.can_manage_house_security(${user.id}::uuid,s.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active)) returning s.house_id "houseId",s.mode,s.version,s.updated_at "updatedAt"`;
+      // Controllers only receive modes from security_mode_sync (via the bridge),
+      // so mirror the house mode there in the same statement/transaction.
+      const rows = await sql`with changed as (update smart_estate.house_security_state s set mode=${mode},version=version+1,updated_at=now() from smart_estate.house h where h.id=s.house_id and s.house_id=${path[1]} and s.version=${expectedVersion} and (smart_estate.can_manage_house_security(${user.id}::uuid,s.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active)) returning s.house_id,s.mode,s.version,s.updated_at),
+        synced as (insert into smart_estate.security_mode_sync(scope_id,scope_type,mode,version,updated_at,updated_by) select house_id,'HOUSE',mode,version,updated_at,${user.id}::uuid from changed on conflict(scope_id) do update set mode=excluded.mode,version=excluded.version,updated_at=excluded.updated_at,updated_by=excluded.updated_by where smart_estate.security_mode_sync.scope_type='HOUSE' and smart_estate.security_mode_sync.version<excluded.version returning scope_id)
+        select house_id "houseId",mode,version,updated_at "updatedAt" from changed`;
       return rows[0] ? NextResponse.json(rows[0]) : jsonError(409, "VERSION_CONFLICT", "Security mode changed; refresh and retry");
     }
     if (request.method === "PUT" && path.length === 4 && path[0] === "houses" && path[2] === "security-sensor-policies") {
@@ -157,6 +169,7 @@ async function mutation(request: NextRequest, context: Context) {
     if (error instanceof CommandSubmissionError) return jsonError(error.code === "DEVICE_OFFLINE" ? 409 : 400, error.code, error.message);
     if (error instanceof ControllerAuthorizationError) return jsonError(404,"CONTROLLER_NOT_FOUND",error.message);
     if (error instanceof ControllerConflictError) return jsonError(409,"CONTROLLER_CONFLICT",error.message);
+    if (isInvalidIdentifier(error)) return jsonError(404, "NOT_FOUND", "Resource was not found");
     console.error("Cloud API mutation failed", { path: path.join("/"), message: error instanceof Error ? error.message : "unknown" }); return jsonError(503, "DATABASE_UNAVAILABLE", "Cloud operation is unavailable");
   }
 }

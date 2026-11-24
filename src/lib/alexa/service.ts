@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { getSql } from "@/lib/cloud/db";
-import { commandDto, submitCommand } from "@/lib/cloud/repository";
+import { commandDto, markStaleControllerDevicesOffline, submitCommand } from "@/lib/cloud/repository";
 import { tokenHash } from "./oauth";
 import type { AlexaAuthorizedInventory, AlexaControlContext } from "./smart-home";
 import type { Device, DeviceCommand, DeviceState, Room } from "@/domain/smart-estate";
@@ -15,12 +15,13 @@ export async function validateAlexaAccessToken(raw: string): Promise<TokenSubjec
 
 async function inventory(userId: string): Promise<AlexaAuthorizedInventory> {
   const sql = getSql();
+  await markStaleControllerDevicesOffline(sql);
   const deviceRows = await sql`select d.id,d.house_id,d.estate_id,d.room_id,d.name,d.type,d.capabilities,d.execution_mode,smart_estate.can_control_house(${userId}::uuid,d.house_id) can_command from smart_estate.device d where d.house_id is not null and smart_estate.can_view_house(${userId}::uuid,d.house_id) and d.type in ('LIGHT','FAN')`;
   const roomRows = await sql`select r.id,r.house_id "houseId",r.name from smart_estate.room r where smart_estate.can_view_house(${userId}::uuid,r.house_id)`;
   const stateRows = await sql`select s.device_id,s.connectivity,s.desired,s.reported,s.command_status,s.last_reported_at from smart_estate.device_state s join smart_estate.device d on d.id=s.device_id where ((d.house_id is not null and smart_estate.can_view_house(${userId}::uuid,d.house_id)) or (d.estate_id is not null and smart_estate.can_view_estate(${userId}::uuid,d.estate_id)))`;
   const authorizedDevices = deviceRows.map(row => ({ id: String(row.id), houseId: row.house_id ? String(row.house_id) : undefined, estateId: row.estate_id ? String(row.estate_id) : undefined, roomId: row.room_id ? String(row.room_id) : undefined, name: String(row.name), type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_command ? ["VIEW", "READ_STATE", "COMMAND"] : ["VIEW", "READ_STATE"] })) as Device[];
   const authorizedRooms = roomRows.map(row => ({ id: String(row.id), houseId: String(row.houseId), name: String(row.name) })) as Room[];
-  const states = Object.fromEntries(stateRows.map(row => [String(row.device_id), { deviceId: String(row.device_id), connectivity: row.connectivity, desired: row.desired, reported: row.reported, commandStatus: row.command_status, lastReportedAt: String(row.last_reported_at) }])) as Record<string, DeviceState>;
+  const states = Object.fromEntries(stateRows.map(row => [String(row.device_id), { deviceId: String(row.device_id), connectivity: row.connectivity, desired: row.desired, reported: row.reported, commandStatus: row.command_status, lastReportedAt: row.last_reported_at ? new Date(row.last_reported_at).toISOString() : null }])) as Record<string, DeviceState>;
   return { devices: authorizedDevices, rooms: authorizedRooms, states };
 }
 
