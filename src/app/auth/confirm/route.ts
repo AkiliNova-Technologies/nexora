@@ -1,12 +1,11 @@
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { type NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { safeInternalPath } from "@/lib/safe-redirect";
 
 const emailOtpTypes = new Set<EmailOtpType>(["email", "signup", "invite", "magiclink", "recovery", "email_change"]);
 
-function safeDestination(value: string | null) {
-  return value?.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
-}
+const safeDestination = (value: string | null) => safeInternalPath(value);
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
