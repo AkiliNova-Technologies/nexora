@@ -4,7 +4,7 @@ import { adminOverview, assignHouseOwner,CommandSubmissionError, dashboard, devi
 import { getSql } from "@/lib/cloud/db";
 import { validateMutationRequest } from "@/lib/cloud/security";
 import { diagnosticRoute, elapsedMs, logServerTiming } from "@/lib/cloud/timing";
-import { associateHouse, cancelProvisioning, ControllerAuthorizationError, ControllerConflictError, controllerDetails, createPendingController, initiatePairing, listControllers, provisioningStatus, requestProvisioning, revokeController } from "@/lib/controllers/service";
+import { associateHouse, cancelProvisioning, requestWifiChange, requestWifiScan, ControllerAuthorizationError, ControllerConflictError, controllerDetails, createPendingController, initiatePairing, listControllers, provisioningStatus, requestProvisioning, revokeController } from "@/lib/controllers/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -147,6 +147,9 @@ async function mutation(request: NextRequest, context: Context) {
     if (request.method === "POST" && path.length === 3 && path[0] === "controllers" && path[2] === "revoke") return NextResponse.json(await revokeController(user.id,path[1]));
     if (request.method === "POST" && path.length === 3 && path[0] === "controllers" && path[2] === "provisioning") return NextResponse.json(await requestProvisioning(user.id,path[1],Number(body.durationSeconds??300)),{status:202});
     if (request.method === "POST" && path.length === 4 && path[0] === "controllers" && path[2] === "provisioning" && path[3] === "cancel") return NextResponse.json(await cancelProvisioning(user.id,path[1]),{status:202});
+    if (request.method === "POST" && path.length === 4 && path[0] === "controllers" && path[2] === "wifi" && path[3] === "scan") return NextResponse.json(await requestWifiScan(user.id,path[1]),{status:202});
+    // The password is passed straight to encryption and is never logged or returned.
+    if (request.method === "POST" && path.length === 3 && path[0] === "controllers" && path[2] === "wifi") return NextResponse.json(await requestWifiChange(user.id,path[1],typeof body.ssid==="string"?body.ssid:"",typeof body.password==="string"?body.password:""),{status:202});
     if (request.method === "PUT" && path.length === 3 && path[0] === "houses" && path[2] === "security-mode") {
       const mode = typeof body.mode === "string" && ["DISARMED","ARMED_HOME","ARMED_AWAY"].includes(body.mode) ? body.mode : null;
       const expectedVersion = Number(body.expectedVersion);

@@ -1,6 +1,8 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import type { TransactionSql } from "postgres";
 import { getSql } from "@/lib/cloud/db";
 import { heartbeatAvailability } from "./availability";
+import { encryptWifiPassword, wifiCredentialError, wifiSecretKey, WifiSecretUnavailableError } from "./wifi-secret";
 
 export class ControllerAuthorizationError extends Error {}
 export class ControllerConflictError extends Error {}
@@ -107,7 +109,7 @@ export async function provisioningStatus(userId: string, controllerId: string) {
   const controller=await sql`select estate_id from smart_estate.controller where id=${controllerId}`;
   if(!controller[0])throw new ControllerAuthorizationError("Controller not found");
   await requireEstateAdmin(userId,controller[0].estate_id);
-  const rows=await sql`select id,sequence,operation,status,duration_seconds "durationSeconds",expires_at "expiresAt",published_at "publishedAt",acknowledged_at "acknowledgedAt",acknowledgement,error,created_at "createdAt",updated_at "updatedAt" from smart_estate.controller_provisioning_request where controller_id=${controllerId} order by sequence desc limit 20`;
+  const rows=await sql`select id,sequence,operation,status,parameters,duration_seconds "durationSeconds",expires_at "expiresAt",published_at "publishedAt",acknowledged_at "acknowledgedAt",acknowledgement,error,created_at "createdAt",updated_at "updatedAt" from smart_estate.controller_provisioning_request where controller_id=${controllerId} order by sequence desc limit 20`;
   return {controllerId,requests:rows};
 }
 
@@ -118,7 +120,7 @@ export async function requestProvisioning(userId:string,controllerId:string,dura
   await requireEstateAdmin(userId,controller[0].estate_id);
   const id=randomUUID();
   const rows=await sql.begin(async tx=>{
-    await tx`update smart_estate.controller_provisioning_request set status='CANCELLED',error='Superseded by a newer administrator request',updated_at=now() where controller_id=${controllerId} and status in ('PENDING','CLAIMED','PUBLISHED')`;
+    await tx`update smart_estate.controller_provisioning_request set status='CANCELLED',error='Superseded by a newer administrator request',secret_ciphertext=null,secret_nonce=null,secret_tag=null,updated_at=now() where controller_id=${controllerId} and status in ('PENDING','CLAIMED','PUBLISHED')`;
     return tx`insert into smart_estate.controller_provisioning_request(id,controller_id,estate_id,gateway_id,requested_by,operation,duration_seconds,expires_at) values(${id}::uuid,${controllerId},${controller[0].estate_id},${controller[0].gateway_id},${userId}::uuid,'OPEN_PROVISIONING_WINDOW',${durationSeconds},now()+interval '10 minutes') returning id,sequence,operation,status,duration_seconds "durationSeconds",expires_at "expiresAt",created_at "createdAt"`;
   });
   return rows[0];
@@ -129,7 +131,55 @@ export async function cancelProvisioning(userId:string,controllerId:string){
   if(!controller[0]||controller[0].revoked_at)throw new ControllerConflictError("Controller is unavailable");
   await requireEstateAdmin(userId,controller[0].estate_id);const id=randomUUID();
   const rows=await sql.begin(async tx=>{
-    await tx`update smart_estate.controller_provisioning_request set status='CANCELLED',error='Cancelled by estate administrator',updated_at=now() where controller_id=${controllerId} and status in ('PENDING','CLAIMED','PUBLISHED')`;
+    await tx`update smart_estate.controller_provisioning_request set status='CANCELLED',error='Cancelled by estate administrator',secret_ciphertext=null,secret_nonce=null,secret_tag=null,updated_at=now() where controller_id=${controllerId} and status in ('PENDING','CLAIMED','PUBLISHED')`;
     return tx`insert into smart_estate.controller_provisioning_request(id,controller_id,estate_id,gateway_id,requested_by,operation,duration_seconds,expires_at) values(${id}::uuid,${controllerId},${controller[0].estate_id},${controller[0].gateway_id},${userId}::uuid,'CLOSE_PROVISIONING_WINDOW',60,now()+interval '2 minutes') returning id,sequence,operation,status,expires_at "expiresAt",created_at "createdAt"`;
   });return rows[0];
+}
+
+// ---------- Remote Wi-Fi (scan and switch networks from the admin dashboard) ----------
+
+async function wifiControllerFor(userId: string, controllerId: string) {
+  const sql = getSql();
+  const rows = await sql`select estate_id,gateway_id,revoked_at from smart_estate.controller where id=${controllerId}`;
+  if (!rows[0] || rows[0].revoked_at) throw new ControllerConflictError("Controller is unavailable");
+  await requireEstateAdmin(userId, rows[0].estate_id);
+  return rows[0] as { estate_id: string; gateway_id: string };
+}
+
+/** Replace any outstanding request, except a network change the controller is already testing. */
+async function supersedeForWifi(tx: TransactionSql, controllerId: string) {
+  const busy = await tx`select id from smart_estate.controller_provisioning_request where controller_id=${controllerId} and operation='SET_WIFI' and status='PUBLISHED' and expires_at>now() for update`;
+  if (busy[0]) throw new ControllerConflictError("The controller is testing a network change. Wait for it to finish (up to 2 minutes).");
+  await tx`update smart_estate.controller_provisioning_request set status='CANCELLED',error='Superseded by a newer administrator request',secret_ciphertext=null,secret_nonce=null,secret_tag=null,updated_at=now() where controller_id=${controllerId} and status in ('PENDING','CLAIMED','PUBLISHED')`;
+}
+
+/** Ask the controller to scan for nearby networks; the list arrives in the request's acknowledgement. */
+export async function requestWifiScan(userId: string, controllerId: string) {
+  const controller = await wifiControllerFor(userId, controllerId);
+  const sql = getSql();
+  const id = randomUUID();
+  const rows = await sql.begin(async tx => {
+    await supersedeForWifi(tx, controllerId);
+    return tx`insert into smart_estate.controller_provisioning_request(id,controller_id,estate_id,gateway_id,requested_by,operation,duration_seconds,expires_at) values(${id}::uuid,${controllerId},${controller.estate_id},${controller.gateway_id},${userId}::uuid,'SCAN_WIFI',60,now()+interval '2 minutes') returning id,sequence,operation,status,expires_at "expiresAt",created_at "createdAt"`;
+  });
+  return rows[0];
+}
+
+/** Ask the controller to test and switch to a network. It keeps the old network if the new one fails. */
+export async function requestWifiChange(userId: string, controllerId: string, ssid: string, password: string) {
+  const invalid = wifiCredentialError(ssid, password);
+  if (invalid) throw new ControllerConflictError(invalid);
+  let key: Buffer;
+  try { key = wifiSecretKey(); } catch (error) { throw new ControllerConflictError(error instanceof WifiSecretUnavailableError ? error.message : "Remote Wi-Fi changes are unavailable"); }
+  const controller = await wifiControllerFor(userId, controllerId);
+  const sql = getSql();
+  const id = randomUUID();
+  const secret = password ? encryptWifiPassword(password, id, key) : null;
+  const rows = await sql.begin(async tx => {
+    await supersedeForWifi(tx, controllerId);
+    const inserted = await tx`insert into smart_estate.controller_provisioning_request(id,controller_id,estate_id,gateway_id,requested_by,operation,duration_seconds,parameters,secret_ciphertext,secret_nonce,secret_tag,expires_at) values(${id}::uuid,${controllerId},${controller.estate_id},${controller.gateway_id},${userId}::uuid,'SET_WIFI',120,${tx.json({ ssid })},${secret?.ciphertext ?? null},${secret?.nonce ?? null},${secret?.tag ?? null},now()+interval '3 minutes') returning id,sequence,operation,status,parameters,expires_at "expiresAt",created_at "createdAt"`;
+    await tx`insert into smart_estate.controller_event(id,controller_id,estate_id,actor_id,type,occurred_at,payload) values(${randomUUID()},${controllerId},${controller.estate_id},${userId}::uuid,'WIFI_CHANGE_REQUESTED',now(),${tx.json({ ssid })})`;
+    return inserted;
+  });
+  return rows[0];
 }

@@ -20,6 +20,13 @@ export type SmartEstateMode = "MOCK" | "BACKEND" | "CLOUD";
 const configuredMode = process.env.NEXT_PUBLIC_SMART_ESTATE_MODE?.toUpperCase();
 export const smartEstateMode: SmartEstateMode = configuredMode === "BACKEND" ? "BACKEND" : configuredMode === "CLOUD" ? "CLOUD" : "MOCK";
 
+export interface ScannedWifiNetwork { ssid: string; rssi: number; secure: boolean }
+export interface ProvisioningRequestStatus {
+  id: string; sequence: number; operation: string; status: string; expiresAt: string;
+  acknowledgedAt?: string | null; error?: string | null; parameters?: { ssid?: string } | null;
+  acknowledgement?: { status?: string; error?: string | null; networks?: ScannedWifiNetwork[]; currentSsid?: string; provisioningState?: string } & Record<string, unknown> | null;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -62,7 +69,9 @@ export class SmartEstateApiClient {
   assignHouseOwner=(houseId:string,ownerId:string)=>this.mutate<{houseId:string;ownerId:string}>(`/admin/houses/${encodeURIComponent(houseId)}/owner`,{ownerId},"PUT");
   initiateControllerPairing=(controllerId:string)=>this.mutate<{pairingId:string;challenge:string;expiresInSeconds:number}>(`/controllers/${encodeURIComponent(controllerId)}/pairing-challenges`);
   revokeController=(controllerId:string)=>this.mutate<{controllerId:string;revoked:true}>(`/controllers/${encodeURIComponent(controllerId)}/revoke`);
-  provisioningStatus=(controllerId:string)=>this.request<{controllerId:string;requests:Array<{id:string;sequence:number;operation:string;status:string;expiresAt:string;acknowledgedAt?:string;error?:string;acknowledgement?:Record<string,unknown>}>}>(`/controllers/${encodeURIComponent(controllerId)}/provisioning`);
+  provisioningStatus=(controllerId:string)=>this.request<{controllerId:string;requests:ProvisioningRequestStatus[]}>(`/controllers/${encodeURIComponent(controllerId)}/provisioning`);
+  wifiScan=(controllerId:string)=>this.mutate<{id:string;status:string;expiresAt:string}>(`/controllers/${encodeURIComponent(controllerId)}/wifi/scan`);
+  wifiConnect=(controllerId:string,body:{ssid:string;password:string})=>this.mutate<{id:string;status:string;expiresAt:string}>(`/controllers/${encodeURIComponent(controllerId)}/wifi`,body);
   openProvisioning=(controllerId:string,durationSeconds:number)=>this.mutate(`/controllers/${encodeURIComponent(controllerId)}/provisioning`,{durationSeconds});
   cancelProvisioning=(controllerId:string)=>this.mutate(`/controllers/${encodeURIComponent(controllerId)}/provisioning/cancel`);
   gate = (estateId: string) => this.request<GateResource>(`/estates/${estateId}/gate`);
