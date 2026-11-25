@@ -20,6 +20,7 @@ export type AssistantIntent =
   | "CAPABILITIES"
   | "ESTATE_OVERVIEW"
   | "UNSUPPORTED_FEATURE"
+  | "ACTIVITY"
   | "HELP"
   | "CANCEL"
   | "CONFIRM"
@@ -29,7 +30,14 @@ export interface ParsedCommand {
   raw: string;
   normalized: string;
   intent: AssistantIntent;
-  action?: "ON" | "OFF" | "OPEN" | "CLOSE" | "STOP" | "ARM" | "DISARM";
+  action?: "ON" | "OFF" | "OPEN" | "CLOSE" | "STOP" | "ARM" | "DISARM" | "SET_BRIGHTNESS" | "SET_COLOR";
+  /** Brightness percentage for SET_BRIGHTNESS. */
+  value?: number;
+  /** Named colour for SET_COLOR. */
+  color?: NamedColor;
+  /** Requested siren duration, when the user names one ("for 5 seconds"). */
+  durationSeconds?: number;
+  activity?: ActivityQuestion;
   deviceType?: Device["type"];
   targetText?: string;
   group?: "ALL" | "HOUSE" | "ESTATE";
@@ -37,11 +45,24 @@ export interface ParsedCommand {
   unsupportedFeature?: "TEMPERATURE" | "FAN_SPEED";
 }
 
+export interface NamedColor { name: string; r: number; g: number; b: number }
+
+export type ActivityQuestion =
+  | { kind: "OFFLINE_DEVICES" }
+  | { kind: "LAST_MOTION" }
+  | { kind: "ALARMS"; hours: number }
+  | { kind: "SUMMARY"; hours: number }
+  | { kind: "DEVICE_HISTORY" }
+  | { kind: "CONTROLLER_STATUS" };
+
+export interface CommandParameters { value?: number; r?: number; g?: number; b?: number; durationSeconds?: number }
+
 export interface ResolvedCommand {
   intent: "CONTROL_DEVICE";
   deviceIds: DeviceId[];
   devices: Device[];
   command: DeviceCommandType;
+  parameters?: CommandParameters;
   houseId?: HouseId;
   grouped?: boolean;
 }
@@ -84,4 +105,16 @@ export interface ConversationContext {
   pendingSecurityConfirmation: PendingSecurityConfirmation | null;
   pendingSecurityTarget: PendingSecurityTarget | null;
   pendingClarification: PendingClarification | null;
+  /** A routine waiting for the user to confirm its whole plan. */
+  pendingRoutine?: PendingRoutine | null;
+  /** Remaining steps of a multi-step request, resumed once a confirmation or choice is answered. */
+  queuedSteps?: string[];
+  queuedPreConfirmed?: boolean;
+}
+
+export interface PendingRoutine {
+  name: string;
+  steps: string[];
+  createdAt: number;
+  expiresAt: number;
 }

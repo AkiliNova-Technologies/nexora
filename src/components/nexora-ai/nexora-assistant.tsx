@@ -8,11 +8,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useDeviceStore, useDevices, useSmartEstate } from "@/components/providers/device-state-provider";
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 import { useSpeechSynthesis } from "@/hooks/use-speech-synthesis";
-import type { DeviceCommand, DeviceState, Estate, GateResource } from "@/domain/smart-estate";
+import type { Device, DeviceCommand, DeviceState, Estate, GateResource, SecurityEvent } from "@/domain/smart-estate";
+import type { AdminOverviewResponse } from "@/lib/api/contracts";
+import { toDevice, toState } from "@/components/admin/admin-device-grid";
+import { answerActivity, matchRoutine, splitSteps, type ActivityCommand, type ActivityData, type ActivityEvent } from "@/lib/nexora-ai/planner";
 import { smartEstateApi, smartEstateMode } from "@/lib/api/client";
 import {
   consumeConfirmation, createConfirmation, createContext, describeStatus, filterDevicesForQuery,
-  normalizeCommand, parseCommand, permissionContextKey, resolveClarificationChoice, resolveControlCommand, shouldProcessTranscript,
+  normalizeCommand, parseCommand, permissionContextKey, DEFAULT_SIREN_SECONDS, resolveClarificationChoice, resolveControlCommand, shouldProcessTranscript,
 } from "@/lib/nexora-ai/command-engine";
 import { buildEstateKnowledge, describeCapabilities, summarizeInventory } from "@/lib/nexora-ai/estate-knowledge";
 import type { AssistantMessage, AssistantPhase, ConversationContext, ResolvedCommand } from "@/lib/nexora-ai/types";
@@ -24,6 +27,30 @@ const mockGate: GateResource = {
   state: { deviceId: "dev-main-entrance-gate", connectivity: "ONLINE", desired: null, reported: { simulation: true, physicalPositionVerification: "UNVERIFIED" }, commandStatus: "IDLE", lastReportedAt: new Date(0).toISOString() },
   physicalPositionVerification: "UNVERIFIED",
 };
+
+const TERMINAL_STATUSES = ["EXECUTED", "FAILED", "TIMEOUT"];
+
+/** Combine the house and (for administrators) estate history into the planner's neutral shape. */
+function activityData(input: { overview: AdminOverviewResponse | null; houseEvents: SecurityEvent[]; commands: DeviceCommand[]; devices: Device[]; states: Record<string, DeviceState>; houses: Array<{ id: string; name: string }>; isAdmin: boolean }): ActivityData {
+  const zoneOf = (metadata?: Record<string, unknown> | null) => (typeof metadata?.zone === "string" ? metadata.zone : null);
+  const events = new Map<string, ActivityEvent>();
+  for (const event of input.houseEvents) events.set(event.id, { type: event.type, severity: event.severity, occurredAt: event.occurredAt, deviceId: event.deviceId, houseId: event.houseId, zone: zoneOf(event.metadata) });
+  for (const event of input.overview?.securityEvents ?? []) if (event.occurredAt) events.set(event.id, { type: event.type, severity: event.severity, occurredAt: event.occurredAt, deviceId: event.deviceId, houseId: event.houseId, zone: zoneOf(event.metadata) });
+  const estateCommands = input.overview?.commands ?? [];
+  const commands: ActivityCommand[] = [
+    ...estateCommands.map((item) => ({ deviceId: item.deviceId, deviceName: item.deviceName, type: item.type, status: item.status, requestedAt: item.requestedAt, requestedByName: item.requestedByName })),
+    ...input.commands.filter((item) => !estateCommands.some((other) => other.id === item.id)).map((item) => ({ deviceId: item.deviceId, type: item.type, status: item.status, requestedAt: item.requestedAt })),
+  ];
+  return {
+    now: Date.now(),
+    events: [...events.values()],
+    commands,
+    devices: input.devices.map((device) => ({ id: device.id, name: device.name, houseId: device.houseId, type: device.type })),
+    states: input.states,
+    houses: input.houses,
+    controllers: input.isAdmin && input.overview ? input.overview.controllers.map((controller) => ({ name: controller.name, networkState: controller.networkState, lastHeartbeatAt: controller.lastHeartbeatAt })) : undefined,
+  };
+}
 
 function message(kind: AssistantMessage["kind"], text: string, phase?: AssistantPhase): AssistantMessage {
   return { id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`, kind, text, phase, createdAt: new Date().toISOString() };
@@ -45,20 +72,72 @@ export function NexoraAssistant() {
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const speech = useSpeechSynthesis();
 
+  // True while an already-approved routine runs, so its steps don't print "Please confirm" prompts.
+  const routineApproved = React.useRef(false);
   const respond = React.useCallback((text: string, nextPhase: AssistantPhase = "idle", aloud = true) => {
+    if (routineApproved.current && text.startsWith("Please confirm:")) return;
     setMessages((current) => [...current, message("assistant", text, nextPhase)]);
     setPhase(nextPhase);
     if (aloud) speech.speak(text);
   }, [speech]);
 
+  const isAdmin = user?.role === "ESTATE_ADMIN";
+  // Estate administrators can reach every house and shared device, not only the selected house.
+  const [estateData, setEstateData] = React.useState<AdminOverviewResponse | null>(null);
+  const refreshEstate = React.useCallback(async () => {
+    if (!isAdmin || smartEstateMode === "MOCK") return null;
+    const value = await smartEstateApi.adminOverview(estates[0]?.id);
+    setEstateData(value);
+    return value;
+  }, [estates, isAdmin]);
+  const estateDevices = React.useMemo(() => (estateData?.devices ?? []).map(toDevice), [estateData]);
+  const allDevices = React.useMemo(() => {
+    const seen = new Set<string>();
+    return [...snapshot.devices, ...(gate ? [gate.device] : []), ...estateDevices].filter((device) => !seen.has(device.id) && Boolean(seen.add(device.id)));
+  }, [estateDevices, gate, snapshot.devices]);
+  const allStates = React.useMemo(() => ({
+    ...Object.fromEntries((estateData?.devices ?? []).map((device) => [device.id, toState(device)])),
+    ...(gate ? { [gate.device.id]: gate.state } : {}),
+    ...snapshot.states,
+  }) as Record<string, DeviceState>, [estateData, gate, snapshot.states]);
+  const assistantHouses = React.useMemo(() => {
+    const byId = new Map(houses.map((house) => [house.id, { id: house.id, name: house.name }]));
+    for (const house of estateData?.houses ?? []) if (!byId.has(house.id)) byId.set(house.id, { id: house.id, name: house.name });
+    return [...byId.values()];
+  }, [estateData, houses]);
+
+  /** Commands sent straight to the API are followed until the controller confirms them. */
+  const followUp = React.useCallback((submitted: DeviceCommand, device: Device) => {
+    if (TERMINAL_STATUSES.includes(submitted.status)) return;
+    void (async () => {
+      let result = submitted;
+      const deadline = Date.now() + 30_000;
+      while (!TERMINAL_STATUSES.includes(result.status) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        try { result = await smartEstateApi.commandStatus(submitted.id); } catch { break; }
+      }
+      if (observedCommands.current.get(result.id) === result.status) return;
+      observedCommands.current.set(result.id, result.status);
+      const gateNote = device.type === "GATE" ? " Physical gate position remains unverified." : "";
+      if (result.status === "EXECUTED") respond(`${device.name} confirmed the command.${gateNote}`, "success");
+      else if (result.status === "FAILED" || result.status === "TIMEOUT") respond(`${device.name} reported ${result.status.toLowerCase()}: ${result.error ?? "no acknowledgement"}.`, "error");
+      else respond(`${device.name} hasn't confirmed the command yet. Check the device before trying again.`, "error");
+      void refreshEstate().catch(() => undefined);
+    })();
+  }, [refreshEstate, respond]);
+
   const execute = React.useCallback(async (resolved: ResolvedCommand) => {
     setPhase("executing");
     setMessages((current) => [...current, message("status", `Sending ${resolved.command.toLowerCase().replaceAll("_", " ")} to ${resolved.devices.length === 1 ? resolved.devices[0].name : `${resolved.devices.length} devices`}…`, "executing")]);
     const results = await Promise.allSettled(resolved.devices.map(async (device): Promise<DeviceCommand> => {
-      if (device.type !== "GATE") return store.sendCommand(device.id, resolved.command);
-      return smartEstateMode === "MOCK"
-        ? { id: crypto.randomUUID(), deviceId: device.id, type: resolved.command, status: "EXECUTED", requestedAt: new Date().toISOString(), completedAt: new Date().toISOString(), physicalPositionVerification: "UNVERIFIED" }
-        : smartEstateApi.command(device.id, { command: resolved.command, clientRequestId: crypto.randomUUID() });
+      // House devices in the live store keep their optimistic updates; everything else goes to the API.
+      const inStore = snapshot.devices.some((item) => item.id === device.id);
+      const valueOnly = !resolved.parameters || Object.keys(resolved.parameters).every((key) => key === "value");
+      if (inStore && valueOnly && device.type !== "GATE") return store.sendCommand(device.id, resolved.command, resolved.parameters?.value);
+      if (smartEstateMode === "MOCK") return { id: crypto.randomUUID(), deviceId: device.id, type: resolved.command, status: "EXECUTED", requestedAt: new Date().toISOString(), completedAt: new Date().toISOString(), physicalPositionVerification: device.type === "GATE" ? "UNVERIFIED" : null };
+      const submitted = await smartEstateApi.command(device.id, { command: resolved.command, parameters: resolved.parameters, clientRequestId: crypto.randomUUID() });
+      followUp(submitted, device);
+      return submitted;
     }));
     contextRef.current.lastDeviceIds = resolved.deviceIds;
     contextRef.current.lastHouseId = resolved.houseId ?? contextRef.current.lastHouseId;
@@ -73,24 +152,24 @@ export function NexoraAssistant() {
     const caveat = resolved.devices.some((device) => device.type === "GATE") ? " Gate controller acknowledgement does not verify physical position." : "";
     const summary = [succeeded.length ? `Completed: ${succeeded.join(", ")}.` : "", pending.length ? `Awaiting acknowledgement: ${pending.join(", ")}.` : "", failed.length ? `Failed: ${failed.join("; ")}.` : ""].filter(Boolean).join(" ");
     respond(`${summary}${caveat}`, failed.length ? "error" : pending.length ? "executing" : "success");
-  }, [respond, store]);
+  }, [followUp, respond, snapshot.devices, store]);
 
   const knowledge = React.useMemo(() => buildEstateKnowledge({
     estate: gate ? mockEstate : undefined,
     houses,
     rooms,
-    devices: gate ? [...snapshot.devices, gate.device] : snapshot.devices,
-    states: { ...snapshot.states, ...(gate ? { [gate.device.id]: gate.state } : {}) },
+    devices: allDevices,
+    states: allStates,
     securityModes: securityMode ? [securityMode] : [],
-  }), [gate, houses, rooms, securityMode, snapshot.devices, snapshot.states]);
+  }), [allDevices, allStates, gate, houses, rooms, securityMode]);
   const permissionsKey = React.useMemo(() => permissionContextKey([...snapshot.devices, ...(gate ? [gate.device] : [])]), [gate, snapshot.devices]);
   const scopeContextKey = React.useMemo(() => `${user?.role ?? "anonymous"}:${houses.map((house) => house.id).toSorted().join(",")}:${estates.map((estate) => estate.id).toSorted().join(",")}`, [estates, houses, user?.role]);
 
-  const processCommand = React.useCallback(async (raw: string) => {
+  /** Handle one request. Multi-step requests and routines call this once per step. */
+  const processSingle = React.useCallback(async (raw: string) => {
     const trimmed = raw.trim();
     if (!trimmed) return;
-    setMessages((current) => [...current, message("user", trimmed)]);
-    setInput(""); setPhase("processing");
+    setPhase("processing");
     let parsed = parseCommand(trimmed);
     const context = contextRef.current;
     if (context.pendingSecurityTarget) {
@@ -162,7 +241,7 @@ export function NexoraAssistant() {
       context.pendingConfirmation = null;
       if (!confirmation) {
         if (context.pendingClarification && context.pendingClarification.expiresAt > Date.now()) {
-          const choices = snapshot.devices.filter((device) => context.pendingClarification?.candidateIds.includes(device.id));
+          const choices = allDevices.filter((device) => context.pendingClarification?.candidateIds.includes(device.id));
           respond(`I still need you to choose a device: ${choices.map((device, index) => `${index + 1}. ${device.name}`).join(", ")}.`);
           return;
         }
@@ -226,7 +305,7 @@ export function NexoraAssistant() {
       respond(`Please confirm: ${mode === "DISARMED" ? "disarm" : "arm"} ${target.name}. This confirmation expires in 30 seconds.`, "idle", false); return;
     }
 
-    let inventory = gate ? [...snapshot.devices, gate.device] : snapshot.devices;
+    let inventory = allDevices;
     let effectiveParsed = parsed;
     if (context.pendingClarification) {
       if (context.pendingClarification.expiresAt <= Date.now()) {
@@ -236,7 +315,7 @@ export function NexoraAssistant() {
       } else {
         const pending = context.pendingClarification;
         const candidateDevices = inventory.filter((device) => pending.candidateIds.includes(device.id));
-        const choice = resolveClarificationChoice(trimmed, candidateDevices, rooms, houses);
+        const choice = resolveClarificationChoice(trimmed, candidateDevices, rooms, assistantHouses);
         if (choice) {
           inventory = [choice];
           effectiveParsed = pending.parsed;
@@ -251,7 +330,7 @@ export function NexoraAssistant() {
     }
 
     if (effectiveParsed.intent === "CONTROL_DEVICE") {
-      const resolution = resolveControlCommand(effectiveParsed, inventory, rooms, context.lastDeviceIds, currentHouse ? [currentHouse.name] : [], Object.fromEntries(houses.map((house) => [house.id, [house.name]])));
+      const resolution = resolveControlCommand(effectiveParsed, inventory, rooms, context.lastDeviceIds, currentHouse ? [currentHouse.name] : [], Object.fromEntries(assistantHouses.map((house) => [house.id, [house.name]])), { preferHouseId: currentHouse?.id, scopeHouseId: currentHouse?.id });
       if (resolution.kind === "ambiguous") {
         context.pendingClarification = { parsed: effectiveParsed, candidateIds: resolution.candidates.map((item) => item.id), createdAt: Date.now(), expiresAt: Date.now() + 5 * 60_000 };
         respond(`I found multiple matches: ${resolution.candidates.map((item) => item.name).join(", ")}. Which one would you like?`); return;
@@ -261,26 +340,118 @@ export function NexoraAssistant() {
         context.pendingConfirmation = createConfirmation(resolution.command);
         respond(`Please confirm: ${resolution.command.command === "OPEN_GATE" ? "open" : "close"} ${resolution.command.devices[0].name}. This confirmation expires in 30 seconds.`, "idle", false); return;
       }
+      if (resolution.command.command === "ACTIVATE_SIREN") {
+        context.pendingConfirmation = createConfirmation(resolution.command);
+        respond(`Please confirm: sound ${resolution.command.devices[0].name} for ${resolution.command.parameters?.durationSeconds ?? DEFAULT_SIREN_SECONDS} seconds. This confirmation expires in 30 seconds.`, "idle", false); return;
+      }
       await execute(resolution.command); return;
+    }
+    if (parsed.intent === "ACTIVITY" && parsed.activity) {
+      const overview = isAdmin ? await refreshEstate().catch(() => estateData) : null;
+      if (parsed.activity.kind === "CONTROLLER_STATUS" && isAdmin && !overview) { respond("I couldn't load controller details right now. Please try again in a moment.", "error"); return; }
+      let houseEvents: SecurityEvent[] = securityEvents;
+      if (currentHouse && smartEstateMode !== "MOCK") {
+        try { houseEvents = (await smartEstateApi.securityEventPage(currentHouse.id, 0, 50)).items; } catch { /* fall back to the recent events already loaded */ }
+      }
+      const commands = Object.values(snapshot.commands).filter((item): item is DeviceCommand => Boolean(item));
+      respond(answerActivity(parsed.activity, parsed.normalized, activityData({ overview, houseEvents, commands, devices: allDevices, states: allStates, houses: assistantHouses, isAdmin })));
+      return;
     }
     if (parsed.intent === "LIST_DEVICES") {
       const devices = filterDevicesForQuery(parsed, inventory, rooms, currentHouse ? [currentHouse.name] : []);
       respond(devices.length ? `Available devices: ${devices.map((item) => item.name).join(", ")}.` : "I couldn't find devices matching that location."); return;
     }
     if (parsed.intent === "SECURITY_STATUS") {
-      const sensors = snapshot.devices.filter((device) => device.type === "MOTION_SENSOR" || device.type === "CONTACT_SENSOR");
+      const sensors = allDevices.filter((device) => device.type === "MOTION_SENSOR" || device.type === "CONTACT_SENSOR" || device.type === "ULTRASONIC_SENSOR");
       const latest = securityEvents[0];
-      respond(`${securityMode ? `${currentHouse?.name ?? "House"} security is ${securityMode.mode.toLowerCase().replaceAll("_", " ")}. ` : ""}${sensors.map((device) => describeStatus(device, snapshot.states[device.id])).join(" ") || "No authorized security sensors are available."}${latest ? ` Latest event: ${latest.type.toLowerCase().replaceAll("_", " ")} at ${new Date(latest.occurredAt).toLocaleString()}.` : ""}`); return;
+      respond(`${securityMode ? `${currentHouse?.name ?? "House"} security is ${securityMode.mode.toLowerCase().replaceAll("_", " ")}. ` : ""}${sensors.map((device) => describeStatus(device, allStates[device.id])).join(" ") || "No authorized security sensors are available."}${latest ? ` Latest event: ${latest.type.toLowerCase().replaceAll("_", " ")} at ${new Date(latest.occurredAt).toLocaleString()}.` : ""}`); return;
     }
     if (parsed.intent === "DEVICE_STATUS") {
-      const matches = filterDevicesForQuery(parsed, inventory.filter((device) => device.type === parsed.deviceType), rooms, currentHouse ? [currentHouse.name] : []);
+      const family: string[] = parsed.deviceType === "LIGHT" ? ["LIGHT", "RGB_LIGHT"] : [parsed.deviceType ?? ""];
+      const matches = filterDevicesForQuery(parsed, inventory.filter((device) => family.includes(device.type)), rooms, currentHouse ? [currentHouse.name] : []);
       if (!matches.length) { respond("I couldn't find an authorized device of that type.", "error"); return; }
-      const states = Object.fromEntries(Object.entries(snapshot.states)) as Record<string, DeviceState>;
-      if (gate) states[gate.device.id] = gate.state;
-      respond(matches.map((device) => describeStatus(device, states[device.id])).join(" ")); context.lastDeviceIds = matches.map((item) => item.id); return;
+      respond(matches.map((device) => describeStatus(device, allStates[device.id])).join(" ")); context.lastDeviceIds = matches.map((item) => item.id); return;
     }
-    respond("I couldn't understand that command. You can ask me to control lights or fans, check status, list devices, or manage an authorized gate.", "error");
-  }, [changeSecurityMode, currentHouse, estates, execute, gate, houses, knowledge, respond, rooms, securityEvents, securityMode, snapshot.devices, snapshot.states, user]);
+    respond("I didn't understand that. Try “turn off the kitchen light”, “make the perimeter strip blue”, “goodnight”, or “what happened today?”. Say “give me examples” for more.", "error");
+  }, [allDevices, allStates, assistantHouses, changeSecurityMode, currentHouse, estateData, estates, execute, houses, isAdmin, knowledge, refreshEstate, respond, rooms, securityEvents, securityMode, snapshot.commands, user]);
+
+  const isWaiting = React.useCallback(() => {
+    const context = contextRef.current;
+    return Boolean(context.pendingConfirmation || context.pendingSecurityConfirmation || context.pendingClarification || context.pendingSecurityTarget);
+  }, []);
+
+  /** Run steps in order; stop and remember the rest if one needs a confirmation or a choice. */
+  const runSteps = React.useCallback(async (steps: string[], preConfirmed: boolean) => {
+    for (let index = 0; index < steps.length; index++) {
+      if (steps.length > 1) setMessages((current) => [...current, message("status", `Step ${index + 1} of ${steps.length}: ${steps[index]}`)]);
+      routineApproved.current = preConfirmed;
+      try {
+        await processSingle(steps[index]);
+        // The user already approved the routine's plan, so its steps don't ask again.
+        if (preConfirmed && (contextRef.current.pendingConfirmation || contextRef.current.pendingSecurityConfirmation)) await processSingle("yes");
+      } finally {
+        routineApproved.current = false;
+      }
+      if (isWaiting()) {
+        contextRef.current.queuedSteps = steps.slice(index + 1);
+        contextRef.current.queuedPreConfirmed = preConfirmed;
+        return;
+      }
+    }
+    contextRef.current.queuedSteps = [];
+  }, [isWaiting, processSingle]);
+
+  const processCommand = React.useCallback(async (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    setMessages((current) => [...current, message("user", trimmed)]);
+    setInput("");
+    const context = contextRef.current;
+    const parsed = parseCommand(trimmed);
+
+    if (context.pendingRoutine) {
+      const routine = context.pendingRoutine;
+      context.pendingRoutine = null;
+      if (parsed.intent === "CONFIRM" && routine.expiresAt > Date.now()) { respond(`Running ${routine.name}.`, "executing", false); await runSteps(routine.steps, true); return; }
+      if (parsed.intent === "CONFIRM") { respond("That routine confirmation expired. Please ask again.", "error"); return; }
+      if (parsed.intent === "CANCEL") { respond(`Cancelled the ${routine.name} routine. Nothing was changed.`); return; }
+    }
+
+    const routine = matchRoutine(parsed.normalized, {
+      houseName: currentHouse?.name,
+      isAdmin,
+      houseDeviceTypes: new Set(allDevices.filter((device) => device.houseId === currentHouse?.id && (!device.allowedOperations || device.allowedOperations.includes("COMMAND"))).map((device) => device.type)),
+      hasPerimeterStrip: allDevices.some((device) => device.type === "RGB_LIGHT" && !device.houseId),
+      hasGate: allDevices.some((device) => device.type === "GATE"),
+    });
+    // A new request (rather than an answer such as "yes", "no", "the second one") abandons
+    // any unfinished steps, so they can never run later by surprise.
+    const isAnswer = parsed.intent === "CONFIRM" || parsed.intent === "CANCEL" || (parsed.intent === "UNKNOWN" && !routine);
+    if (!isAnswer) {
+      context.queuedSteps = [];
+      context.pendingClarification = null;
+      context.pendingSecurityTarget = null;
+    }
+
+    // An answer to an outstanding confirmation or choice, then any remaining steps.
+    if (isAnswer && isWaiting()) {
+      if (parsed.intent === "CANCEL") context.queuedSteps = [];
+      await processSingle(trimmed);
+      if (!isWaiting() && context.queuedSteps?.length) {
+        const rest = context.queuedSteps;
+        context.queuedSteps = [];
+        await runSteps(rest, Boolean(context.queuedPreConfirmed));
+      }
+      return;
+    }
+
+    if (routine?.steps.length) {
+      context.pendingRoutine = { ...routine, createdAt: Date.now(), expiresAt: Date.now() + 30_000 };
+      respond(`${routine.name} routine: ${routine.steps.map((step, index) => `${index + 1}) ${step}`).join(", ")}. Say yes to run it or no to cancel. This expires in 30 seconds.`, "idle", false);
+      return;
+    }
+    await runSteps(splitSteps(trimmed), false);
+  }, [allDevices, currentHouse?.id, currentHouse?.name, isAdmin, isWaiting, processSingle, respond, runSteps]);
 
   const recognition = useSpeechRecognition((text) => {
     if (!shouldProcessTranscript(recentTranscripts.current, text)) return;
@@ -293,6 +464,13 @@ export function NexoraAssistant() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages([]); setPhase("idle"); observedCommands.current.clear();
   }, [currentHouse?.id, permissionsKey, scopeContextKey, user?.id, user?.role]);
+  React.useEffect(() => {
+    if (!open || !isAdmin || smartEstateMode === "MOCK") return;
+    const load = () => { if (document.visibilityState === "visible") void refreshEstate().catch(() => undefined); };
+    load();
+    const timer = window.setInterval(load, 15_000);
+    return () => window.clearInterval(timer);
+  }, [isAdmin, open, refreshEstate]);
   React.useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, recognition.interim]);
   React.useEffect(() => {
     if (!open || smartEstateMode === "MOCK" || gate) return;
@@ -345,7 +523,7 @@ export function NexoraAssistant() {
         <Button variant="ghost" size="icon-sm" aria-label="Close Nexora AI" onClick={close}><X /></Button>
       </header>
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" aria-live="polite">
-        {messages.length === 0 && <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><p className="text-sm leading-6 text-white">Hello {user?.name?.split(" ")[0]}, I&apos;m Nexora AI. I can help manage authorized lighting, gate, ventilation, and security features. Ask what I can do, or give me a command.</p><div className="mt-3 flex flex-wrap gap-2">{["What can you do?", ...suggestions, "Check security status"].map((item) => <button key={item} onClick={() => void processCommand(item)} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-white/10 hover:text-white">{item}</button>)}</div></div>}
+        {messages.length === 0 && <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><p className="text-sm leading-6 text-white">Hello {user?.name?.split(" ")[0]}, I&apos;m Nexora AI. I can help manage authorized lighting, gate, ventilation, and security features. Ask what I can do, or give me a command.</p><div className="mt-3 flex flex-wrap gap-2">{["What can you do?", ...suggestions, "What happened today?", "Goodnight"].map((item) => <button key={item} onClick={() => void processCommand(item)} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-white/10 hover:text-white">{item}</button>)}</div></div>}
         {messages.map((item) => <div key={item.id} className={`flex ${item.kind === "user" ? "justify-end" : "justify-start"}`}><div className={`max-w-[86%] rounded-2xl px-3.5 py-2.5 text-sm leading-5 ${item.kind === "user" ? "bg-blue-500 text-white" : item.kind === "status" ? "border border-blue-500/20 bg-blue-500/10 text-blue-100" : item.phase === "error" ? "border border-red-500/20 bg-red-500/10 text-red-100" : "bg-white/[0.06] text-gray-100"}`}><p>{item.text}</p><time className="mt-1 block text-[10px] opacity-55">{new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></div></div>)}
         {recognition.interim && <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3.5 py-2.5 text-sm italic text-amber-100"><span className="sr-only">Partial transcript: </span>{recognition.interim}</div>}
         {(phase === "processing" || phase === "executing") && <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status"><LoaderCircle className="size-3.5 animate-spin" />{phase === "processing" ? "Understanding your request…" : "Waiting for authoritative acknowledgement…"}</div>}

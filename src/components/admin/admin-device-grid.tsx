@@ -15,7 +15,7 @@ import type { Device, DeviceCapability, DeviceCommandStatus, DeviceCommandType, 
 const TERMINAL = new Set(["EXECUTED", "FAILED", "TIMEOUT", "CANCELLED", "EXPIRED", "REJECTED"]);
 const REFRESH_MS = 8000;
 
-function toDevice(summary: AdminDeviceSummary): Device {
+export function toDevice(summary: AdminDeviceSummary): Device {
   return {
     id: summary.id,
     houseId: summary.houseId ?? undefined,
@@ -30,7 +30,7 @@ function toDevice(summary: AdminDeviceSummary): Device {
   };
 }
 
-function toState(summary: AdminDeviceSummary): DeviceState {
+export function toState(summary: AdminDeviceSummary): DeviceState {
   return {
     deviceId: summary.id,
     connectivity: (summary.connectivity ?? "UNKNOWN") as DeviceConnectivity,

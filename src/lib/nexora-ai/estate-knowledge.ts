@@ -67,20 +67,26 @@ export function describeCapabilities(knowledge: EstateKnowledge, topic: "GENERAL
   const operational = knowledge.devices.filter((item) => item.availability === "OPERATIONAL");
   const offline = knowledge.devices.filter((item) => item.availability === "OFFLINE");
   const unconfigured = knowledge.devices.filter((item) => item.availability === "UNCONFIGURED");
-  const lights = operational.filter((item) => item.device.type === "LIGHT");
+  const lights = operational.filter((item) => item.device.type === "LIGHT" || item.device.type === "RGB_LIGHT");
+  const strips = operational.filter((item) => item.device.type === "RGB_LIGHT");
+  const sirens = operational.filter((item) => item.device.type === "SIREN");
   const fans = operational.filter((item) => item.device.type === "FAN");
   const gates = operational.filter((item) => item.device.type === "GATE" && item.device.allowedOperations?.includes("COMMAND") !== false);
   const sensors = operational.filter((item) => item.device.type === "MOTION_SENSOR" || item.device.type === "CONTACT_SENSOR");
-  if (topic === "EXAMPLES") return "Try: ‘turn on the kitchen light’, ‘turn off all lights in this house’, ‘is the fan running?’, ‘check security’, ‘show connected devices’, or ‘what is the gate status?’ Gate movement and security changes require confirmation where supported.";
+  if (topic === "EXAMPLES") return "Try: ‘turn on the kitchen light’, ‘kill the lights’, ‘make the perimeter strip blue’, ‘dim the strip to 30%’, ‘turn off the lights and arm the house’, ‘goodnight’, ‘I'm leaving’, ‘which devices are offline?’, ‘when was motion last detected?’ or ‘what happened today?’. Gate movement, the siren and security changes ask for confirmation first.";
   if (topic === "SECURITY") return `I can check ${knowledge.securityModes.length ? "and change" : "the available"} house security state and report actual authorized sensor events. I can see ${sensors.length} operational security sensor${sensors.length === 1 ? "" : "s"}. Compound security is not available unless an estate-level security zone is registered by the backend.`;
   if (topic === "GATE") return gates.length ? "I can open or close the authorized estate gate after confirmation and request controller status. The controller does not verify physical gate position, and stop is unavailable unless the registered gate exposes that operation." : "No authorized operational estate gate is currently registered.";
   if (topic === "DEVICES") return summarizeInventory(knowledge);
   const abilities = [
     lights.length ? `control ${lights.length} operational light${lights.length === 1 ? "" : "s"}` : "",
+    strips.length ? "change the perimeter strip's colour and brightness" : "",
+    sirens.length ? "sound or silence the siren after confirmation" : "",
     fans.length ? `switch ${fans.length} fan${fans.length === 1 ? "" : "s"} on or off` : "",
     gates.length ? "operate the main gate with confirmation" : "",
     sensors.length ? "check security sensors and alerts" : "",
     knowledge.securityModes.length ? "manage supported house security modes" : "",
+    "run routines such as ‘goodnight’ or ‘I'm leaving’",
+    "answer questions such as ‘what happened today?’",
   ].filter(Boolean);
   const unavailable = offline.length ? ` ${offline.length} configured device${offline.length === 1 ? " is" : "s are"} currently offline.` : "";
   const withoutState = unconfigured.length ? ` ${unconfigured.length} visible device${unconfigured.length === 1 ? " has" : "s have"} no current state report.` : "";
