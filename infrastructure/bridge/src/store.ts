@@ -8,7 +8,8 @@ export class BridgeStore {
   constructor(path: string, private readonly maxEvents: number) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
-    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+    // secure_delete zeroes freed space, so a redacted Wi-Fi password does not linger in the file.
+    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS outbound_event(
         event_id TEXT PRIMARY KEY, payload TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
@@ -80,6 +81,15 @@ export class BridgeStore {
   pendingProvisioning():ProvisioningRequest[]{return this.db.prepare("SELECT payload FROM provisioning_delivery WHERE state='CLAIMED' AND expires_at>? ORDER BY updated_at LIMIT 10").all(Date.now()).map(row=>JSON.parse(String((row as {payload:string}).payload)) as ProvisioningRequest);}
   provisioningState(commandId:string){return this.db.prepare("SELECT state,expires_at FROM provisioning_delivery WHERE command_id=?").get(commandId) as {state:string;expires_at:number}|undefined;}
   setProvisioningState(commandId:string,state:"PUBLISHED"|"TERMINAL"){this.db.prepare("UPDATE provisioning_delivery SET state=?,updated_at=? WHERE command_id=?").run(state,Date.now(),commandId);}
+  /** Once a request is published, keep no Wi-Fi password on disk; it is never needed again. */
+  redactProvisioningSecret(commandId:string){
+    const row=this.db.prepare("SELECT payload FROM provisioning_delivery WHERE command_id=?").get(commandId) as {payload:string}|undefined;
+    if(!row)return;
+    const request=JSON.parse(row.payload) as ProvisioningRequest;
+    if(!request.parameters||!("password" in request.parameters))return;
+    const {password:_removed,...rest}=request.parameters;void _removed;
+    this.db.prepare("UPDATE provisioning_delivery SET payload=? WHERE command_id=?").run(JSON.stringify({...request,parameters:rest}),commandId);
+  }
   checkpoint(controllerId: string, scopeId: string, version: number) {
     this.db.prepare("INSERT INTO security_checkpoint(controller_id,scope_id,version,updated_at) VALUES(?,?,?,?) ON CONFLICT(controller_id,scope_id) DO UPDATE SET version=excluded.version,updated_at=excluded.updated_at WHERE excluded.version>security_checkpoint.version")
       .run(controllerId, scopeId, version, Date.now());

@@ -42,6 +42,7 @@ export type BridgeSync = {
 
 export type ProvisioningRequest = {
   commandId:string;leaseId:string;controllerId:string;sequence:number;
-  type:"OPEN_PROVISIONING_WINDOW"|"CLOSE_PROVISIONING_WINDOW";
-  parameters:{durationSeconds:number};issuedAt:string;expiresAt:string;
+  type:"OPEN_PROVISIONING_WINDOW"|"CLOSE_PROVISIONING_WINDOW"|"SCAN_WIFI"|"SET_WIFI";
+  /** SET_WIFI carries {ssid,password}; the password is removed from local storage once published. */
+  parameters:Record<string,unknown>;issuedAt:string;expiresAt:string;
 };

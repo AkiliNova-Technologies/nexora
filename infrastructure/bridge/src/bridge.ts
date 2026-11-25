@@ -180,6 +180,7 @@ export class Bridge {
     await this.cloud.confirmProvisioning(request.commandId,request.leaseId);
     await publishQos1(this.mqtt,`smartestate/v1/controllers/${request.controllerId}/provisioning`,JSON.stringify(request));
     this.store.setProvisioningState(request.commandId,"PUBLISHED");
+    this.store.redactProvisioningSecret(request.commandId);
   }
 
   private registrationFor(command: CloudCommand) {

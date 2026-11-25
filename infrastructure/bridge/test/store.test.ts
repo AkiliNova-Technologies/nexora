@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BridgeStore } from "../src/store.js";
@@ -64,4 +64,17 @@ test("provisioning delivery survives bridge restart without changing sequence",(
   const request={commandId:"11111111-1111-4111-8111-111111111111",leaseId:"22222222-2222-4222-8222-222222222222",controllerId:"controller-1",sequence:42,type:"OPEN_PROVISIONING_WINDOW" as const,parameters:{durationSeconds:300},issuedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+60_000).toISOString()};
   const first=new BridgeStore(path,100);first.recordProvisioning(request);first.close();
   const second=new BridgeStore(path,100);assert.deepEqual(second.pendingProvisioning(),[request]);second.setProvisioningState(request.commandId,"PUBLISHED");assert.equal(second.pendingProvisioning().length,0);second.close();rmSync(directory,{recursive:true});
+});
+
+test("a Wi-Fi password is removed from the bridge's disk once published",()=>{
+  const directory=mkdtempSync(join(tmpdir(),"nexora-bridge-"));const path=join(directory,"queue.sqlite");
+  const request={commandId:"33333333-3333-4333-8333-333333333333",leaseId:"44444444-4444-4444-8444-444444444444",controllerId:"controller-1",sequence:43,type:"SET_WIFI" as const,parameters:{ssid:"Estate-Office",password:"correct-horse-battery"},issuedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+60_000).toISOString()};
+  const store=new BridgeStore(path,100);store.recordProvisioning(request);
+  assert.equal(store.pendingProvisioning()[0].parameters.password,"correct-horse-battery");
+  store.setProvisioningState(request.commandId,"PUBLISHED");store.redactProvisioningSecret(request.commandId);store.close();
+  for(const file of [path,`${path}-wal`]){
+    let raw:Buffer;try{raw=readFileSync(file);}catch{continue;}
+    assert.equal(raw.includes(Buffer.from("correct-horse-battery")),false,`password bytes must not remain in ${file}`);
+  }
+  rmSync(directory,{recursive:true});
 });
