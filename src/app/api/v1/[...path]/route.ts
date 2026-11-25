@@ -16,7 +16,9 @@ const isInvalidIdentifier = (error: unknown) => Boolean(error && typeof error ==
 
 async function authenticated() {
   const user = await requireUser();
-  return user ? { id: user.id, email: user.email } : null;
+  if (!user) return null;
+  const metadata = user.claims.user_metadata as { display_name?: unknown } | undefined;
+  return { id: user.id, email: user.email, name: typeof metadata?.display_name === "string" ? metadata.display_name : undefined };
 }
 
 export async function GET(request: NextRequest, context: Context) {
@@ -85,7 +87,7 @@ export async function GET(request: NextRequest, context: Context) {
       const total = rows[0]?.total ?? 0; return NextResponse.json({ items: rows.map((row) => { const item = { ...row }; delete item.total; return item; }), page, pageSize, total, totalPages: Math.ceil(total / pageSize) });
     }
     if (path.length === 3 && path[0] === "estates" && path[2] === "gate") {
-      const rows = await sql`select d.id,d.estate_id,d.name,d.type,d.capabilities,d.execution_mode,s.connectivity,s.desired,s.reported,s.command_status,s.last_reported_at,(smart_estate.can_control_estate_device(${user.id}::uuid,d.estate_id,d.type) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${user.id}::uuid and a.active)) can_control_gate from smart_estate.device d join smart_estate.device_state s on s.device_id=d.id where d.estate_id=${path[1]} and d.type='GATE' and (smart_estate.can_view_estate(${user.id}::uuid,d.estate_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${user.id}::uuid and a.active)) limit 1`;
+      const rows = await sql`select d.id,d.estate_id,d.name,d.type,d.capabilities,d.execution_mode,s.connectivity,s.desired,s.reported,s.command_status,s.last_reported_at,(smart_estate.can_control_estate_device(${user.id}::uuid,d.estate_id,d.type) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${user.id}::uuid and a.active) or exists(select 1 from smart_estate.house owner_house where owner_house.estate_id=d.estate_id and owner_house.owner_id=${user.id}::uuid)) can_control_gate from smart_estate.device d join smart_estate.device_state s on s.device_id=d.id where d.estate_id=${path[1]} and d.type='GATE' and d.retired_at is null and (smart_estate.can_view_estate(${user.id}::uuid,d.estate_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=d.estate_id and a.user_id=${user.id}::uuid and a.active) or exists(select 1 from smart_estate.house owner_house where owner_house.estate_id=d.estate_id and owner_house.owner_id=${user.id}::uuid)) limit 1`;
       const row = rows[0]; if (!row) return jsonError(404, "GATE_NOT_FOUND", "Estate gate was not found");
       return NextResponse.json({ device: { id: row.id, estateId: row.estate_id, name: row.name, type: row.type, capabilities: row.capabilities, executionMode: row.execution_mode, allowedOperations: row.can_control_gate ? ["VIEW","READ_STATE","COMMAND"] : ["VIEW","READ_STATE"] }, state: { deviceId: row.id, connectivity: row.connectivity, desired: row.desired, reported: row.reported, commandStatus: row.command_status, lastReportedAt: row.last_reported_at }, physicalPositionVerification: "UNVERIFIED" });
     }
@@ -131,9 +133,10 @@ async function mutation(request: NextRequest, context: Context) {
     const user = await authenticated(); if (!user) return jsonError(401, "UNAUTHENTICATED", "Authentication is required");
     const sql = getSql();
     if(request.method==="PUT"&&path.length===4&&path[0]==="admin"&&path[1]==="houses"&&path[3]==="owner"){
-      const ownerId=String(body.ownerId??"");
-      if(!/^[0-9a-f-]{36}$/i.test(ownerId))return jsonError(400,"INVALID_OWNER","A valid resident ID is required");
-      const result=await assignHouseOwner(user.id,path[2],ownerId);
+      const ownerId=String(body.ownerId??"").trim();
+      const ownerEmail=String(body.ownerEmail??"").trim().toLowerCase();
+      if(ownerEmail?!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail):!/^[0-9a-f-]{36}$/i.test(ownerId))return jsonError(400,"INVALID_OWNER","A valid resident or account email is required");
+      const result=await assignHouseOwner(user.id,path[2],ownerEmail?{ownerEmail}:{ownerId});
       return result?NextResponse.json(result):jsonError(404,"HOUSE_NOT_FOUND","House was not found in an administered estate");
     }
     if (path.length === 3 && path[0] === "devices" && path[2] === "commands") {

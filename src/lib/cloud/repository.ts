@@ -18,7 +18,7 @@ export async function markStaleControllerDevicesOffline(sql: SqlLike, deviceId?:
   return sql`update smart_estate.device_state s set connectivity='OFFLINE',version=version+1 from smart_estate.device d join smart_estate.controller c on c.id=d.controller_id where s.device_id=d.id and s.connectivity in ('ONLINE','DEGRADED') and c.last_seen_at is not null and c.last_seen_at<now()-${CONTROLLER_OFFLINE_AFTER_SECONDS}*interval '1 second' ${deviceId ? sql`and d.id=${deviceId}` : sql``}`;
 }
 
-type User = { id: string; email: string };
+type User = { id: string; email: string; name?: string };
 const commandTypes = new Set(["TURN_ON", "TURN_OFF", "SET_BRIGHTNESS", "SET_FAN_SPEED", "SET_TARGET_TEMPERATURE", "LOCK", "UNLOCK", "OPEN", "CLOSE", "STOP", "START_RECORDING", "STOP_RECORDING", "SET_RGB", "ACTIVATE_SIREN", "STOP_SIREN", "OPEN_GATE", "CLOSE_GATE", "GET_GATE_STATUS"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -28,7 +28,13 @@ export class CommandSubmissionError extends Error {
 
 export async function profile(user: User) {
   const sql = getSql();
-  const rows = await sql`select id, display_name, email from smart_estate.profile where id = ${user.id}::uuid`;
+  let rows = await sql`select id, display_name, email from smart_estate.profile where id = ${user.id}::uuid`;
+  if (!rows[0] && user.email) {
+    // Registration only creates the auth account. Create the profile on first
+    // sign-in so administrators can find and assign the resident.
+    const metadataName = user.name?.trim() ?? "";
+    rows = await sql`insert into smart_estate.profile(id,display_name,email) values(${user.id}::uuid,${metadataName || user.email.split("@")[0]},${user.email.toLowerCase()}) on conflict(id) do update set email=excluded.email returning id, display_name, email`;
+  }
   const row = rows[0];
   const admin = await sql`select exists(select 1 from smart_estate.estate_admin where user_id=${user.id}::uuid and active) value`;
   const role = admin[0]?.value ? "ESTATE_ADMIN" : "USER";
@@ -42,7 +48,7 @@ export async function adminOverview(userId: string, requestedEstateId?: string |
   if (!estate) return null;
   const [houses, residents,devices, controllers, commands, securityEvents] = await Promise.all([
     sql`select h.id,h.name,h.timezone,p.id "ownerId",p.display_name "ownerName",p.email "ownerEmail",coalesce(ds.devices,0)::int "deviceCount",coalesce(ds.online,0)::int "onlineDeviceCount",coalesce(ss.mode,'DISARMED') "securityMode" from smart_estate.house h left join smart_estate.profile p on p.id=h.owner_id left join smart_estate.house_security_state ss on ss.house_id=h.id left join lateral(select count(*) devices,count(*) filter(where s.connectivity='ONLINE') online from smart_estate.device d left join smart_estate.device_state s on s.device_id=d.id where d.retired_at is null and d.house_id=h.id) ds on true where h.estate_id=${estate.id} order by h.name`,
-    sql`select distinct p.id,p.display_name "name",p.email,exists(select 1 from smart_estate.house h where h.estate_id=${estate.id} and h.owner_id=p.id) "isHomeowner" from smart_estate.profile p where exists(select 1 from smart_estate.estate_member m where m.estate_id=${estate.id} and m.user_id=p.id and m.active) or exists(select 1 from smart_estate.house h where h.estate_id=${estate.id} and h.owner_id=p.id) order by p.display_name`,
+    sql`select distinct p.id,p.display_name "name",p.email,exists(select 1 from smart_estate.house h where h.estate_id=${estate.id} and h.owner_id=p.id) "isHomeowner" from smart_estate.profile p where exists(select 1 from smart_estate.estate_member m where m.estate_id=${estate.id} and m.user_id=p.id and m.active) or exists(select 1 from smart_estate.house h where h.estate_id=${estate.id} and h.owner_id=p.id) or exists(select 1 from smart_estate.house_access x join smart_estate.house h on h.id=x.house_id where h.estate_id=${estate.id} and x.user_id=p.id and x.active) order by p.display_name`,
     sql`select d.id,d.house_id "houseId",d.estate_id "estateId",d.controller_id "controllerId",d.name,d.type,d.capabilities,d.execution_mode "executionMode",s.connectivity,s.reported,s.desired,s.command_status "commandStatus",s.last_reported_at "lastReportedAt" from smart_estate.device d left join smart_estate.device_state s on s.device_id=d.id left join smart_estate.house h on h.id=d.house_id where d.retired_at is null and (d.estate_id=${estate.id} or h.estate_id=${estate.id}) order by d.name`,
     sql`select c.id,c.name,c.gateway_id "gatewayId",c.registration_state "registrationState",c.pairing_state "pairingState",c.network_state "networkState",c.mqtt_state "mqttState",c.wifi_ssid "wifiSsid",c.wifi_rssi "wifiRssi",c.firmware_version "firmwareVersion",c.last_heartbeat_at "lastHeartbeatAt",c.last_seen_at "lastSeenAt",c.hardware_readiness "hardwareReadiness",c.uptime_seconds "uptimeSeconds" from smart_estate.controller c where c.estate_id=${estate.id} and c.revoked_at is null order by c.name`,
     sql`select c.id,c.device_id "deviceId",d.name "deviceName",c.type,c.status,c.requested_at "requestedAt",c.completed_at "completedAt",c.error,p.display_name "requestedByName" from smart_estate.device_command c join smart_estate.device d on d.id=c.device_id left join smart_estate.house h on h.id=d.house_id left join smart_estate.profile p on p.id=c.requested_by where d.estate_id=${estate.id} or h.estate_id=${estate.id} order by c.requested_at desc limit 20`,
@@ -51,15 +57,21 @@ export async function adminOverview(userId: string, requestedEstateId?: string |
   return { estates, estate, houses, residents,devices, controllers, commands, securityEvents };
 }
 
-export async function assignHouseOwner(userId:string,houseId:string,newOwnerId:string){
+export async function assignHouseOwner(userId:string,houseId:string,target:{ownerId?:string;ownerEmail?:string}){
   const sql=getSql();
   return sql.begin(async tx=>{
     const rows=await tx`select h.id,h.estate_id,h.owner_id from smart_estate.house h where h.id=${houseId} and exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${userId}::uuid and a.active) for update`;
     const house=rows[0];if(!house)return null;
-    const eligible=await tx`select exists(select 1 from smart_estate.profile p where p.id=${newOwnerId}::uuid and (exists(select 1 from smart_estate.estate_member m where m.estate_id=${house.estate_id} and m.user_id=p.id and m.active) or exists(select 1 from smart_estate.house_access x join smart_estate.house h on h.id=x.house_id where h.estate_id=${house.estate_id} and x.user_id=p.id and x.active))) allowed`;
-    if(!eligible[0]?.allowed)throw new CommandSubmissionError("INVALID_COMMAND","The selected resident is not eligible in this estate");
+    // A resident is any signed-in Nexora account, found by ID (from the resident list) or by email.
+    const resident=target.ownerEmail
+      ?await tx`select id from smart_estate.profile where lower(email)=${target.ownerEmail.toLowerCase()} limit 1`
+      :await tx`select id from smart_estate.profile where id=${String(target.ownerId)}::uuid limit 1`;
+    if(!resident[0])throw new CommandSubmissionError("INVALID_COMMAND",target.ownerEmail?"No Nexora account with that email has signed in yet. Ask the resident to sign in once, then try again.":"The selected resident was not found");
+    const newOwnerId=String(resident[0].id);
     await tx`update smart_estate.house set owner_id=${newOwnerId}::uuid where id=${houseId}`;
     await tx`delete from smart_estate.house_access where house_id=${houseId} and user_id=${newOwnerId}::uuid`;
+    // Homeowners are estate residents: they see shared estate devices and may operate the gate.
+    await tx`insert into smart_estate.estate_member(estate_id,user_id,active,can_view_shared_devices,can_control_gate) values(${house.estate_id},${newOwnerId}::uuid,true,true,true) on conflict(estate_id,user_id) do update set active=true,can_view_shared_devices=true,can_control_gate=true`;
     await tx`insert into smart_estate.audit_record(id,actor_id,house_id,estate_id,action,resource_type,resource_id,details) values(${randomUUID()}::uuid,${userId}::uuid,${houseId},${house.estate_id},'HOUSE_OWNER_REASSIGNED','house',${houseId},${tx.json({previousOwnerId:house.owner_id,newOwnerId})})`;
     return {houseId,ownerId:newOwnerId};
   });
