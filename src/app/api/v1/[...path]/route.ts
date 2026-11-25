@@ -73,6 +73,8 @@ export async function GET(request: NextRequest, context: Context) {
       return rows[0] ? NextResponse.json(rows[0]) : jsonError(404, "HOUSE_NOT_FOUND", "House was not found");
     }
     if (path.length === 3 && path[0] === "houses" && path[2] === "security-sensor-policies") {
+      // Give every security sensor in the house a default policy so it can be configured.
+      await sql`insert into smart_estate.security_sensor_policy(house_id,device_id) select d.house_id,d.id from smart_estate.device d join smart_estate.house h on h.id=d.house_id where d.house_id=${path[1]} and d.retired_at is null and d.type in ('MOTION_SENSOR','CONTACT_SENSOR','ULTRASONIC_SENSOR') and (smart_estate.can_view_house(${user.id}::uuid,d.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active)) on conflict(house_id,device_id) do nothing`;
       const rows = await sql`select p.house_id "houseId",p.device_id "deviceId",p.enabled,p.monitor_armed_home "monitorArmedHome",p.monitor_armed_away "monitorArmedAway",p.version,p.updated_at "updatedAt",p.metadata from smart_estate.security_sensor_policy p join smart_estate.house h on h.id=p.house_id where p.house_id=${path[1]} and (smart_estate.can_view_house(${user.id}::uuid,p.house_id) or exists(select 1 from smart_estate.estate_admin a where a.estate_id=h.estate_id and a.user_id=${user.id}::uuid and a.active)) order by p.device_id`;
       return NextResponse.json(rows);
     }

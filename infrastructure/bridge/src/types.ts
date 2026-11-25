@@ -32,6 +32,8 @@ export type SecurityMode = {
   version: number;
   issuedAt: string;
   expiresAt: string;
+  /** House modes only: whether each security sensor may raise an alarm in this mode. */
+  sensors?: { deviceId: string; monitored: boolean }[];
 };
 
 export type BridgeSync = {

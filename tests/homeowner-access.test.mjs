@@ -26,3 +26,15 @@ test("an assigned homeowner becomes an estate resident with gate access", () => 
 test("a profile is created on first sign-in so residents can be found", () => {
   assert.match(repository, /insert into smart_estate\.profile\(id,display_name,email\)/);
 });
+
+const sync = await readFile(new URL("../src/app/api/iot/v1/bridge/sync/route.ts", import.meta.url), "utf8");
+
+test("house security modes carry per-sensor policy to the controller", () => {
+  assert.match(sync, /sensors: houseSensors\(mode\.scope_id, mode\.mode\)/);
+  assert.match(sync, /mode === "ARMED_HOME" \? Boolean\(policy\.monitor_armed_home\)/);
+  assert.match(sync, /version: Number\(mode\.version\) \+ \(house \? policyVersion\(mode\.scope_id\) : 0\)/);
+});
+
+test("house sensors get a default policy so owners can configure them", () => {
+  assert.match(route, /insert into smart_estate\.security_sensor_policy\(house_id,device_id\) select/);
+});
